@@ -101,12 +101,16 @@ fn walk_opts(cli: &Cli) -> WalkOptions {
     }
 }
 
+#[cfg(unix)]
 fn setup_pager(cli: &Cli) {
     if cli.no_pager {
         return;
     }
     pager::Pager::with_default_pager("less -FRX").setup();
 }
+
+#[cfg(not(unix))]
+fn setup_pager(_cli: &Cli) {}
 
 fn run_scan(cli: &Cli) -> ExitCode {
     let scan = walker::collect(&cli.path, walk_opts(cli));
