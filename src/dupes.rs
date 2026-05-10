@@ -157,3 +157,139 @@ fn format_bytes(b: u64) -> String {
         format!("{:.2} GB", b as f64 / GB as f64)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::walker::FileEntry;
+    use std::fs;
+    use std::io::Write;
+    use std::time::SystemTime;
+    use tempfile::tempdir;
+
+    fn write_file(path: &Path, bytes: &[u8]) -> FileEntry {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let mut f = fs::File::create(path).unwrap();
+        f.write_all(bytes).unwrap();
+        FileEntry {
+            path: path.to_path_buf(),
+            size: bytes.len() as u64,
+            extension: path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("none")
+                .to_lowercase(),
+            modified: SystemTime::now(),
+        }
+    }
+
+    #[test]
+    fn identical_files_form_a_group() {
+        let dir = tempdir().unwrap();
+        let payload = vec![7u8; 8192];
+        let a = write_file(&dir.path().join("a.bin"), &payload);
+        let b = write_file(&dir.path().join("b.bin"), &payload);
+        let groups = find(&[a, b], 0);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].paths.len(), 2);
+        assert_eq!(groups[0].size, 8192);
+    }
+
+    #[test]
+    fn different_content_same_size_is_not_a_dupe() {
+        let dir = tempdir().unwrap();
+        let a = write_file(&dir.path().join("a.bin"), &vec![1u8; 8192]);
+        let b = write_file(&dir.path().join("b.bin"), &vec![2u8; 8192]);
+        let groups = find(&[a, b], 0);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn min_size_filter_excludes_small_files() {
+        let dir = tempdir().unwrap();
+        let a = write_file(&dir.path().join("a.bin"), b"hi");
+        let b = write_file(&dir.path().join("b.bin"), b"hi");
+        let groups = find(&[a, b], 1024);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn three_copies_grouped_together() {
+        let dir = tempdir().unwrap();
+        let payload = vec![42u8; 4096];
+        let a = write_file(&dir.path().join("a.bin"), &payload);
+        let b = write_file(&dir.path().join("b.bin"), &payload);
+        let c = write_file(&dir.path().join("c.bin"), &payload);
+        let groups = find(&[a, b, c], 0);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].paths.len(), 3);
+    }
+
+    #[test]
+    fn singletons_are_not_reported() {
+        let dir = tempdir().unwrap();
+        let a = write_file(&dir.path().join("lonely.bin"), &vec![9u8; 2048]);
+        let groups = find(&[a], 0);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn groups_sorted_by_wasted_space_desc() {
+        let dir = tempdir().unwrap();
+        // Group A: 2 copies × 1024 = 1024 wasted
+        let small = vec![1u8; 1024];
+        let a1 = write_file(&dir.path().join("small1.bin"), &small);
+        let a2 = write_file(&dir.path().join("small2.bin"), &small);
+        // Group B: 2 copies × 8192 = 8192 wasted (should rank first)
+        let big = vec![2u8; 8192];
+        let b1 = write_file(&dir.path().join("big1.bin"), &big);
+        let b2 = write_file(&dir.path().join("big2.bin"), &big);
+
+        let groups = find(&[a1, a2, b1, b2], 0);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].size, 8192);
+        assert_eq!(groups[1].size, 1024);
+    }
+
+    #[test]
+    fn handles_large_file_with_tail_hashing() {
+        let dir = tempdir().unwrap();
+        // Files larger than 2 * PARTIAL_HASH_BYTES exercise the tail-hash branch.
+        let size = (PARTIAL_HASH_BYTES * 3) as usize;
+        let mut payload = vec![0u8; size];
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let a = write_file(&dir.path().join("a.bin"), &payload);
+        let b = write_file(&dir.path().join("b.bin"), &payload);
+
+        // Same head and tail, different middle → must NOT be reported as dupes.
+        let mut diff_middle = payload.clone();
+        let mid = size / 2;
+        diff_middle[mid] ^= 0xFF;
+        let c = write_file(&dir.path().join("c.bin"), &diff_middle);
+
+        let groups = find(&[a, b, c], 0);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].paths.len(), 2);
+    }
+
+    #[test]
+    fn paths_within_group_are_sorted() {
+        let dir = tempdir().unwrap();
+        let payload = vec![3u8; 4096];
+        let z = write_file(&dir.path().join("z.bin"), &payload);
+        let a = write_file(&dir.path().join("a.bin"), &payload);
+        let m = write_file(&dir.path().join("m.bin"), &payload);
+        let groups = find(&[z, a, m], 0);
+        assert_eq!(groups.len(), 1);
+        let names: Vec<_> = groups[0]
+            .paths
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["a.bin", "m.bin", "z.bin"]);
+    }
+}

@@ -91,6 +91,7 @@ dependencies = [
  "pager",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
