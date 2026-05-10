@@ -73,6 +73,10 @@ enum Command {
         /// Minimum file size to consider (bytes); ignore tiny files
         #[arg(long, default_value_t = 1024)]
         min_size: u64,
+
+        /// Interactively delete duplicate copies (keep one per group)
+        #[arg(long)]
+        delete: bool,
     },
     /// Interactively delete stale files
     Delete,
@@ -88,7 +92,7 @@ fn main() -> ExitCode {
 
     match &cli.command {
         None => run_scan(&cli),
-        Some(Command::Dupes { min_size }) => run_dupes(&cli, *min_size),
+        Some(Command::Dupes { min_size, delete }) => run_dupes(&cli, *min_size, *delete),
         Some(Command::Delete) => run_delete(&cli),
     }
 }
@@ -135,12 +139,22 @@ fn run_scan(cli: &Cli) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_dupes(cli: &Cli, min_size: u64) -> ExitCode {
+fn run_dupes(cli: &Cli, min_size: u64, delete: bool) -> ExitCode {
     let scan = walker::collect(&cli.path, walk_opts(cli));
     let groups = dupes::find(&scan.files, min_size);
-    setup_pager(cli);
-    dupes::render(&groups, &cli.path);
-    ExitCode::SUCCESS
+    if delete {
+        match dupes::delete_interactive(&groups, &cli.path) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("bigfiles: dupes delete failed: {}", e);
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        setup_pager(cli);
+        dupes::render(&groups, &cli.path);
+        ExitCode::SUCCESS
+    }
 }
 
 fn run_delete(cli: &Cli) -> ExitCode {

@@ -1,8 +1,9 @@
 use crate::walker::FileEntry;
+use dialoguer::{theme::ColorfulTheme, Confirm, Select};
 use owo_colors::OwoColorize;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::fs::{self, File};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 const PARTIAL_HASH_BYTES: u64 = 4096;
@@ -141,6 +142,165 @@ pub fn render(groups: &[DupeGroup], root: &Path) {
         }
         println!();
     }
+}
+
+pub fn delete_interactive(groups: &[DupeGroup], root: &Path) -> io::Result<()> {
+    println!();
+    if groups.is_empty() {
+        println!(
+            "  {} no duplicates found in {}",
+            "✓".green(),
+            root.display().dimmed()
+        );
+        println!();
+        return Ok(());
+    }
+
+    println!(
+        "  {} {} {} {} duplicate group{} — pick one copy to KEEP per group",
+        "bigfiles dupes --delete".bold(),
+        root.display().dimmed(),
+        "·".dimmed(),
+        groups.len().to_string().cyan(),
+        if groups.len() == 1 { "" } else { "s" },
+    );
+    println!(
+        "  {}",
+        "Use ↑/↓ to choose what to keep, Enter to confirm. Esc to skip a group.".dimmed()
+    );
+    println!();
+
+    let mut to_delete: Vec<PathBuf> = Vec::new();
+    let mut delete_size: u64 = 0;
+
+    for (i, g) in groups.iter().enumerate() {
+        let waste = g.size * (g.paths.len() as u64 - 1);
+        println!(
+            "  {} {} copies × {} = {} reclaimable",
+            format!("[{}/{}]", i + 1, groups.len()).dimmed(),
+            g.paths.len().to_string().cyan(),
+            format_bytes(g.size),
+            format_bytes(waste).yellow(),
+        );
+
+        let items: Vec<String> = g.paths.iter().map(|p| p.display().to_string()).collect();
+        let mut skip_items = items.clone();
+        skip_items.push("[skip this group — keep all]".to_string());
+
+        let pick = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Keep which copy?")
+            .items(&skip_items)
+            .default(0)
+            .interact_opt()
+            .map_err(io::Error::other)?;
+
+        let Some(idx) = pick else {
+            println!("  {}", "skipped.".dimmed());
+            println!();
+            continue;
+        };
+
+        if idx == items.len() {
+            println!("  {}", "skipped.".dimmed());
+            println!();
+            continue;
+        }
+
+        for (j, p) in g.paths.iter().enumerate() {
+            if j != idx {
+                to_delete.push(p.clone());
+                delete_size += g.size;
+            }
+        }
+        println!();
+    }
+
+    if to_delete.is_empty() {
+        println!("  {}", "Nothing selected. No files deleted.".dimmed());
+        println!();
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "  About to {} {} duplicate cop{} ({}):",
+        "PERMANENTLY DELETE".red().bold(),
+        to_delete.len().to_string().red().bold(),
+        if to_delete.len() == 1 { "y" } else { "ies" },
+        format_bytes(delete_size).red().bold(),
+    );
+    for p in &to_delete {
+        println!("    {}", p.display());
+    }
+    println!();
+    println!(
+        "  {} {}",
+        "Files will not go to Trash.".red(),
+        "This cannot be undone.".red().bold()
+    );
+    println!();
+
+    let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("Proceed with deletion?")
+        .default(false)
+        .interact()
+        .map_err(io::Error::other)?;
+
+    if !confirmed {
+        println!("  {}", "Aborted. No files deleted.".dimmed());
+        println!();
+        return Ok(());
+    }
+
+    let mut deleted = 0usize;
+    let mut failed = 0usize;
+    let mut freed = 0u64;
+    for p in &to_delete {
+        let meta = match fs::symlink_metadata(p) {
+            Ok(m) => m,
+            Err(e) => {
+                failed += 1;
+                eprintln!("  failed (stat): {} ({})", p.display(), e);
+                continue;
+            }
+        };
+        if !meta.file_type().is_file() {
+            failed += 1;
+            eprintln!(
+                "  refused (not a regular file — symlink or special): {}",
+                p.display()
+            );
+            continue;
+        }
+        let size = meta.len();
+        match fs::remove_file(p) {
+            Ok(()) => {
+                deleted += 1;
+                freed += size;
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("  failed: {} ({})", p.display(), e);
+            }
+        }
+    }
+
+    println!();
+    println!(
+        "  {} deleted {} files, freed {}",
+        "✓".green(),
+        deleted.to_string().cyan(),
+        format_bytes(freed).cyan()
+    );
+    if failed > 0 {
+        println!(
+            "  {} {} files could not be deleted",
+            "✗".red(),
+            failed.to_string().red()
+        );
+    }
+    println!();
+    Ok(())
 }
 
 fn format_bytes(b: u64) -> String {
