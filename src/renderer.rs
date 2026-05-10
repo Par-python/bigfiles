@@ -1,5 +1,6 @@
 use crate::analyzer::CategorySummary;
 use crate::classifier::categorize;
+use crate::format::bytes as format_bytes;
 use crate::walker::FileEntry;
 use owo_colors::OwoColorize;
 use std::collections::HashMap;
@@ -114,37 +115,5 @@ pub fn render_top(files: &[FileEntry], n: usize) {
             );
         }
         println!();
-    }
-}
-
-fn format_bytes(b: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
-    const GB: u64 = 1024 * MB;
-    const TB: u64 = 1024 * GB;
-    if b < KB {
-        format!("{} B", b)
-    } else if b < MB {
-        format!("{:.1} KB", b as f64 / KB as f64)
-    } else if b < GB {
-        format!("{:.1} MB", b as f64 / MB as f64)
-    } else if b < TB {
-        format!("{:.2} GB", b as f64 / GB as f64)
-    } else {
-        format!("{:.2} TB", b as f64 / TB as f64)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn format_bytes_scales() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(512), "512 B");
-        assert_eq!(format_bytes(1024), "1.0 KB");
-        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
-        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
     }
 }

@@ -2,18 +2,20 @@
 
 [![CI](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml)
 
-A small Rust CLI that walks a directory in parallel, groups files by type, flags stale ones, finds duplicates, and renders a color-coded summary in the terminal.
+A small Rust CLI that walks a directory in parallel, groups files by type, flags stale ones, finds duplicates (hardlink-aware), and renders a color-coded summary in the terminal. Cross-platform: Linux, macOS, Windows.
 
 ## What it does
 
 - Walks a directory tree **in parallel** and collects file sizes, extensions, and modified timestamps
 - Respects `.gitignore` and `.ignore` files by default (use `--no-ignore` to disable)
+- Skips symlinks (no double-counting, no follow-link footguns)
 - Groups files into categories: video, images, archives, audio, documents, code, junk, other
 - Flags files not modified in the last N years as stale
 - Renders a color-coded table with size bars, optionally with the largest files per category
-- Finds duplicate files by content hash and lets you reclaim wasted space
-- Interactively deletes stale files with explicit confirmation
+- Finds duplicate files by content hash with **parallel BLAKE3 hashing** and **hardlink awareness** (collapses same-inode files so reclaimable space is honest)
+- Interactively deletes stale files **or** duplicate copies with explicit confirmation
 - Emits JSON for piping into other tools
+- Colorized `--help` output via clap styles
 
 ## Install
 
@@ -65,7 +67,13 @@ Use `--no-ignore` to walk everything regardless.
 
 ### Find duplicate files
 
-`bigfiles dupes` finds files with identical content. It uses a fast three-stage check: group by size → hash first/last 4 KB → full BLAKE3 hash on remaining candidates. Almost no false positives, fast on large trees.
+`bigfiles dupes` finds files with identical content. It uses a fast three-stage check, parallelized with `rayon`:
+
+1. Group by size
+2. Hash first/last 4 KB (`partial_hash`)
+3. Full BLAKE3 hash on remaining candidates
+
+Hardlinks are collapsed by inode before hashing, so multiple paths pointing to the same on-disk file are reported as a single entry (and don't inflate "reclaimable" numbers). When a duplicate group includes hardlinks, the additional paths are shown indented under the primary path.
 
 ```bash
 # Find dupes >= 1 MB in Downloads
@@ -74,6 +82,25 @@ bigfiles dupes ~/Downloads --min-size 1048576
 # Default min-size is 1 KB; tune as needed
 bigfiles dupes ~/Documents --min-size 1
 ```
+
+#### Delete duplicate copies (interactive)
+
+`bigfiles dupes --delete` walks each duplicate group and lets you pick which copy to **keep**; the rest are queued for deletion. After all groups are processed, you get a red summary and a `y/N` confirm before any file is touched.
+
+```bash
+bigfiles dupes ~/Downloads --delete
+```
+
+Safety guarantees:
+
+- Per-group single-choice picker — you can only delete by *not picking* one to keep
+- Every group offers a "skip — keep all" option; `Esc` also skips
+- Always keeps ≥1 copy per group (it's structurally impossible to empty a group)
+- No deletion happens until the final `y/N` confirm; default is **No**
+- Files are re-stat'd immediately before removal; non-regular files (symlinks, sockets, devices) are refused
+- Files are removed permanently — they do **not** go to Trash
+
+Note that dupes are only ever paired *within* the scan root. If two copies live in separate trees, scan a common parent.
 
 ### Delete stale files (interactive)
 
@@ -132,14 +159,29 @@ bigfiles uses the file's **modified time** (`mtime`), not access time. Many file
 
 ```
 src/
-  main.rs        # CLI entry, subcommand dispatch
-  walker.rs      # Directory traversal, file collection
+  main.rs        # CLI entry, subcommand dispatch, clap styles
+  walker.rs      # Parallel directory traversal, file collection, inode capture
   classifier.rs  # Extension → category mapping
   analyzer.rs    # Grouping, sorting, stale detection
   renderer.rs    # Default scan output
-  dupes.rs       # Duplicate detection + rendering
+  dupes.rs       # Duplicate detection (parallel, hardlink-aware) + interactive delete
   delete.rs      # Interactive stale-file deletion
+  format.rs      # Shared byte-size formatter
 ```
+
+## Platform notes
+
+- **Linux & macOS**: full feature set, including hardlink-aware dupe detection and pager auto-launch.
+- **Windows**: builds and runs cleanly via `cargo build --release` (CI covers `windows-latest`). Two caveats:
+  - **Pager is disabled** on Windows (there's no portable `less`). Output prints straight to stdout — pipe to `more` or use Windows Terminal's scrollback. The `--no-pager` flag is a no-op there.
+  - **Hardlink detection is currently inactive** — the inode/file-index API is nightly-only on `std`. Dupe detection still works, but hardlinks are treated as separate entries instead of being collapsed.
+
+## Caveats
+
+- **Deletion is permanent** for both `delete` and `dupes --delete` — nothing goes to Trash. The interactive flow exists precisely to keep that decision explicit; there is no `--force` or non-interactive delete mode by design.
+- **Dupe pairing is relative to the scan root.** If two copies live in separate trees (e.g. `~/A/file` and `~/B/file`), running `bigfiles ~/A dupes` won't find them. Scan a common parent.
+- **`--top` and `--json` only apply to the default scan.** They're accepted but ignored under `dupes`/`delete` (a stderr note is printed).
+- **Symlinks are skipped entirely.** If you rely on symlink farms for organization, walking through them isn't supported — point bigfiles at the real paths.
 
 ## Future ideas
 
@@ -147,6 +189,8 @@ src/
 - `--watch` mode that re-scans on an interval
 - A full TUI with `ratatui` (expand/collapse categories, arrow-key navigation)
 - Persistent index in `~/.cache/bigfiles/` to diff scans over time
+- Replace dupes with hardlinks (`--link` mode) instead of deleting
+- `--exclude <glob>` flag for ad-hoc exclusion beyond gitignore
 - Homebrew formula
 
 ## License

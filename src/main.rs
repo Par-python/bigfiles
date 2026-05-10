@@ -2,6 +2,7 @@ mod analyzer;
 mod classifier;
 mod delete;
 mod dupes;
+mod format;
 mod renderer;
 mod walker;
 
@@ -88,6 +89,12 @@ fn main() -> ExitCode {
     if !cli.path.exists() {
         eprintln!("bigfiles: path does not exist: {}", cli.path.display());
         return ExitCode::from(2);
+    }
+
+    if cli.command.is_some() && (cli.top.is_some() || cli.json) {
+        eprintln!(
+            "bigfiles: --top and --json only apply to the default scan; ignoring for this subcommand"
+        );
     }
 
     match &cli.command {

@@ -1,14 +1,18 @@
 use ignore::WalkBuilder;
+use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::SystemTime;
+
+pub type InodeKey = (u64, u64);
 
 pub struct FileEntry {
     pub path: PathBuf,
     pub size: u64,
     pub extension: String,
     pub modified: SystemTime,
+    pub inode: Option<InodeKey>,
 }
 
 pub struct ScanResult {
@@ -22,8 +26,19 @@ pub struct WalkOptions {
     pub respect_ignore: bool,
 }
 
+#[cfg(unix)]
+fn inode_key(meta: &Metadata) -> Option<InodeKey> {
+    use std::os::unix::fs::MetadataExt;
+    Some((meta.dev(), meta.ino()))
+}
+
+#[cfg(not(unix))]
+fn inode_key(_: &Metadata) -> Option<InodeKey> {
+    None
+}
+
 pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
-    let files: Mutex<Vec<FileEntry>> = Mutex::new(Vec::new());
+    let merged: Mutex<Vec<FileEntry>> = Mutex::new(Vec::new());
     let skipped = AtomicUsize::new(0);
 
     let mut builder = WalkBuilder::new(root);
@@ -34,14 +49,33 @@ pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
         .git_exclude(opts.respect_ignore)
         .ignore(opts.respect_ignore)
         .parents(opts.respect_ignore)
-        .require_git(false);
+        .require_git(false)
+        .follow_links(false);
     if let Some(d) = opts.max_depth {
         builder.max_depth(Some(d));
     }
 
+    struct ThreadBuf<'a> {
+        local: Vec<FileEntry>,
+        merged: &'a Mutex<Vec<FileEntry>>,
+    }
+    impl Drop for ThreadBuf<'_> {
+        fn drop(&mut self) {
+            if !self.local.is_empty() {
+                if let Ok(mut guard) = self.merged.lock() {
+                    guard.append(&mut self.local);
+                }
+            }
+        }
+    }
+
     builder.build_parallel().run(|| {
-        let files = &files;
+        let merged = &merged;
         let skipped = &skipped;
+        let mut buf = ThreadBuf {
+            local: Vec::new(),
+            merged,
+        };
         Box::new(move |result| {
             let entry = match result {
                 Ok(e) => e,
@@ -55,7 +89,7 @@ pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
                 Some(ft) => ft,
                 None => return ignore::WalkState::Continue,
             };
-            if !ft.is_file() {
+            if !ft.is_file() || ft.is_symlink() {
                 return ignore::WalkState::Continue;
             }
 
@@ -82,22 +116,25 @@ pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
                 .unwrap_or("none")
                 .to_lowercase();
 
-            let entry = FileEntry {
+            buf.local.push(FileEntry {
                 path,
                 size: meta.len(),
                 extension,
                 modified,
-            };
+                inode: inode_key(&meta),
+            });
 
-            if let Ok(mut guard) = files.lock() {
-                guard.push(entry);
+            if buf.local.len() >= 1024 {
+                if let Ok(mut guard) = buf.merged.lock() {
+                    guard.append(&mut buf.local);
+                }
             }
             ignore::WalkState::Continue
         })
     });
 
     ScanResult {
-        files: files.into_inner().unwrap_or_default(),
+        files: merged.into_inner().unwrap_or_default(),
         skipped: skipped.load(Ordering::Relaxed),
     }
 }
@@ -225,5 +262,39 @@ mod tests {
         write_file(&dir.path().join("f.txt"), b"x");
         let r = collect(dir.path(), default_opts());
         assert_eq!(r.files.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_symlinks_to_files() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("real.txt"), b"x");
+        symlink(dir.path().join("real.txt"), dir.path().join("link.txt")).unwrap();
+        let r = collect(dir.path(), default_opts());
+        assert_eq!(names(&r), vec!["real.txt"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn populates_inode_key_on_unix() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("a.txt"), b"x");
+        let r = collect(dir.path(), default_opts());
+        assert!(r.files[0].inode.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlinks_share_inode_key() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("a.txt"), b"hello");
+        fs::hard_link(dir.path().join("a.txt"), dir.path().join("b.txt")).unwrap();
+        let r = collect(dir.path(), default_opts());
+        assert_eq!(r.files.len(), 2);
+        let a = r.files.iter().find(|f| f.path.ends_with("a.txt")).unwrap();
+        let b = r.files.iter().find(|f| f.path.ends_with("b.txt")).unwrap();
+        assert_eq!(a.inode, b.inode);
+        assert!(a.inode.is_some());
     }
 }

@@ -1,3 +1,4 @@
+use crate::format::bytes as format_bytes;
 use crate::walker::FileEntry;
 use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
 use owo_colors::OwoColorize;
@@ -128,19 +129,4 @@ pub fn run(files: &[FileEntry], stale_years: u64) -> io::Result<()> {
     }
     println!();
     Ok(())
-}
-
-fn format_bytes(b: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
-    const GB: u64 = 1024 * MB;
-    if b < KB {
-        format!("{} B", b)
-    } else if b < MB {
-        format!("{:.1} KB", b as f64 / KB as f64)
-    } else if b < GB {
-        format!("{:.1} MB", b as f64 / MB as f64)
-    } else {
-        format!("{:.2} GB", b as f64 / GB as f64)
-    }
 }

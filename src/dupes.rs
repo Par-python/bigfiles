@@ -1,6 +1,8 @@
-use crate::walker::FileEntry;
+use crate::format::bytes as format_bytes;
+use crate::walker::{FileEntry, InodeKey};
 use dialoguer::{theme::ColorfulTheme, Confirm, Select};
 use owo_colors::OwoColorize;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -8,12 +10,39 @@ use std::path::{Path, PathBuf};
 
 const PARTIAL_HASH_BYTES: u64 = 4096;
 
-pub struct DupeGroup {
-    pub size: u64,
+pub struct DupeEntry {
     pub paths: Vec<PathBuf>,
 }
 
+impl DupeEntry {
+    pub fn primary_path(&self) -> &Path {
+        &self.paths[0]
+    }
+}
+
+pub struct DupeGroup {
+    pub size: u64,
+    pub entries: Vec<DupeEntry>,
+}
+
+impl DupeGroup {
+    pub fn reclaimable(&self) -> u64 {
+        self.size * (self.entries.len() as u64 - 1)
+    }
+}
+
 pub fn find(files: &[FileEntry], min_size: u64) -> Vec<DupeGroup> {
+    let by_size = group_by_size(files, min_size);
+    let mut groups: Vec<DupeGroup> = by_size
+        .into_par_iter()
+        .flat_map_iter(|(size, candidates)| process_size_bucket(size, candidates).into_iter())
+        .collect();
+
+    groups.sort_by_key(|g| std::cmp::Reverse(g.reclaimable()));
+    groups
+}
+
+fn group_by_size(files: &[FileEntry], min_size: u64) -> HashMap<u64, Vec<&FileEntry>> {
     let mut by_size: HashMap<u64, Vec<&FileEntry>> = HashMap::new();
     for f in files {
         if f.size < min_size {
@@ -21,51 +50,77 @@ pub fn find(files: &[FileEntry], min_size: u64) -> Vec<DupeGroup> {
         }
         by_size.entry(f.size).or_default().push(f);
     }
+    by_size.retain(|_, v| v.len() >= 2);
+    by_size
+}
 
-    let mut groups: Vec<DupeGroup> = Vec::new();
-
-    for (size, candidates) in by_size {
-        if candidates.len() < 2 {
-            continue;
-        }
-
-        let mut by_partial: HashMap<[u8; 32], Vec<&FileEntry>> = HashMap::new();
-        for f in &candidates {
-            if let Some(h) = partial_hash(&f.path) {
-                by_partial.entry(h).or_default().push(f);
-            }
-        }
-
-        for partial_group in by_partial.into_values() {
-            if partial_group.len() < 2 {
-                continue;
-            }
-
-            let mut by_full: HashMap<[u8; 32], Vec<&FileEntry>> = HashMap::new();
-            for f in &partial_group {
-                if let Some(h) = full_hash(&f.path) {
-                    by_full.entry(h).or_default().push(f);
-                }
-            }
-
-            for full_group in by_full.into_values() {
-                if full_group.len() < 2 {
-                    continue;
-                }
-                let mut paths: Vec<PathBuf> = full_group.iter().map(|f| f.path.clone()).collect();
-                paths.sort();
-                groups.push(DupeGroup { size, paths });
-            }
+fn process_size_bucket(size: u64, candidates: Vec<&FileEntry>) -> Vec<DupeGroup> {
+    let by_inode = collapse_hardlinks(&candidates);
+    if by_inode.len() < 2 {
+        return Vec::new();
+    }
+    let by_partial = group_by_partial_hash(&by_inode);
+    let mut out = Vec::new();
+    for partial_group in by_partial {
+        for full_group in group_by_full_hash(&partial_group) {
+            let mut entries: Vec<DupeEntry> = full_group;
+            entries.sort_by(|a, b| a.primary_path().cmp(b.primary_path()));
+            out.push(DupeGroup { size, entries });
         }
     }
+    out
+}
 
-    groups.sort_by(|a, b| {
-        let a_waste = a.size * (a.paths.len() as u64 - 1);
-        let b_waste = b.size * (b.paths.len() as u64 - 1);
-        b_waste.cmp(&a_waste)
-    });
+fn collapse_hardlinks(files: &[&FileEntry]) -> Vec<DupeEntry> {
+    let mut by_inode: HashMap<InodeKey, Vec<PathBuf>> = HashMap::new();
+    let mut without_inode: Vec<PathBuf> = Vec::new();
+    for f in files {
+        match f.inode {
+            Some(k) => by_inode.entry(k).or_default().push(f.path.clone()),
+            None => without_inode.push(f.path.clone()),
+        }
+    }
+    let mut entries: Vec<DupeEntry> = by_inode
+        .into_values()
+        .map(|mut paths| {
+            paths.sort();
+            DupeEntry { paths }
+        })
+        .collect();
+    for p in without_inode {
+        entries.push(DupeEntry { paths: vec![p] });
+    }
+    entries
+}
 
-    groups
+fn group_by_partial_hash(entries: &[DupeEntry]) -> Vec<Vec<DupeEntry>> {
+    let hashed: Vec<([u8; 32], &DupeEntry)> = entries
+        .par_iter()
+        .filter_map(|e| partial_hash(e.primary_path()).map(|h| (h, e)))
+        .collect();
+
+    let mut by_hash: HashMap<[u8; 32], Vec<DupeEntry>> = HashMap::new();
+    for (h, e) in hashed {
+        by_hash.entry(h).or_default().push(DupeEntry {
+            paths: e.paths.clone(),
+        });
+    }
+    by_hash.into_values().filter(|v| v.len() >= 2).collect()
+}
+
+fn group_by_full_hash(entries: &[DupeEntry]) -> Vec<Vec<DupeEntry>> {
+    let hashed: Vec<([u8; 32], &DupeEntry)> = entries
+        .par_iter()
+        .filter_map(|e| full_hash(e.primary_path()).map(|h| (h, e)))
+        .collect();
+
+    let mut by_hash: HashMap<[u8; 32], Vec<DupeEntry>> = HashMap::new();
+    for (h, e) in hashed {
+        by_hash.entry(h).or_default().push(DupeEntry {
+            paths: e.paths.clone(),
+        });
+    }
+    by_hash.into_values().filter(|v| v.len() >= 2).collect()
 }
 
 fn partial_hash(path: &Path) -> Option<[u8; 32]> {
@@ -112,10 +167,7 @@ pub fn render(groups: &[DupeGroup], root: &Path) {
         return;
     }
 
-    let total_waste: u64 = groups
-        .iter()
-        .map(|g| g.size * (g.paths.len() as u64 - 1))
-        .sum();
+    let total_waste: u64 = groups.iter().map(|g| g.reclaimable()).sum();
 
     println!(
         "  {} {} {} {} duplicate group{}, {} reclaimable",
@@ -129,16 +181,22 @@ pub fn render(groups: &[DupeGroup], root: &Path) {
     println!();
 
     for (i, g) in groups.iter().enumerate() {
-        let waste = g.size * (g.paths.len() as u64 - 1);
         println!(
             "  {} {} copies × {} = {} wasted",
             format!("[{}]", i + 1).dimmed(),
-            g.paths.len().to_string().cyan(),
+            g.entries.len().to_string().cyan(),
             format_bytes(g.size),
-            format_bytes(waste).yellow(),
+            format_bytes(g.reclaimable()).yellow(),
         );
-        for p in &g.paths {
-            println!("      {}", p.display());
+        for e in &g.entries {
+            println!("      {}", e.primary_path().display());
+            for hl in e.paths.iter().skip(1) {
+                println!(
+                    "        {} {}",
+                    "↳ hardlink:".dimmed(),
+                    hl.display().to_string().dimmed()
+                );
+            }
         }
         println!();
     }
@@ -174,16 +232,30 @@ pub fn delete_interactive(groups: &[DupeGroup], root: &Path) -> io::Result<()> {
     let mut delete_size: u64 = 0;
 
     for (i, g) in groups.iter().enumerate() {
-        let waste = g.size * (g.paths.len() as u64 - 1);
         println!(
             "  {} {} copies × {} = {} reclaimable",
             format!("[{}/{}]", i + 1, groups.len()).dimmed(),
-            g.paths.len().to_string().cyan(),
+            g.entries.len().to_string().cyan(),
             format_bytes(g.size),
-            format_bytes(waste).yellow(),
+            format_bytes(g.reclaimable()).yellow(),
         );
 
-        let items: Vec<String> = g.paths.iter().map(|p| p.display().to_string()).collect();
+        let items: Vec<String> = g
+            .entries
+            .iter()
+            .map(|e| {
+                if e.paths.len() == 1 {
+                    e.primary_path().display().to_string()
+                } else {
+                    format!(
+                        "{}  (+{} hardlink{})",
+                        e.primary_path().display(),
+                        e.paths.len() - 1,
+                        if e.paths.len() == 2 { "" } else { "s" }
+                    )
+                }
+            })
+            .collect();
         let mut skip_items = items.clone();
         skip_items.push("[skip this group — keep all]".to_string());
 
@@ -206,11 +278,14 @@ pub fn delete_interactive(groups: &[DupeGroup], root: &Path) -> io::Result<()> {
             continue;
         }
 
-        for (j, p) in g.paths.iter().enumerate() {
-            if j != idx {
-                to_delete.push(p.clone());
-                delete_size += g.size;
+        for (j, e) in g.entries.iter().enumerate() {
+            if j == idx {
+                continue;
             }
+            for p in &e.paths {
+                to_delete.push(p.clone());
+            }
+            delete_size += g.size;
         }
         println!();
     }
@@ -303,21 +378,6 @@ pub fn delete_interactive(groups: &[DupeGroup], root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn format_bytes(b: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
-    const GB: u64 = 1024 * MB;
-    if b < KB {
-        format!("{} B", b)
-    } else if b < MB {
-        format!("{:.1} KB", b as f64 / KB as f64)
-    } else if b < GB {
-        format!("{:.1} MB", b as f64 / MB as f64)
-    } else {
-        format!("{:.2} GB", b as f64 / GB as f64)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,15 +393,32 @@ mod tests {
         }
         let mut f = fs::File::create(path).unwrap();
         f.write_all(bytes).unwrap();
+        make_entry(path, bytes.len() as u64)
+    }
+
+    #[cfg(unix)]
+    fn test_inode_key(path: &Path) -> Option<crate::walker::InodeKey> {
+        use std::os::unix::fs::MetadataExt;
+        let m = fs::symlink_metadata(path).ok()?;
+        Some((m.dev(), m.ino()))
+    }
+
+    #[cfg(not(unix))]
+    fn test_inode_key(_path: &Path) -> Option<crate::walker::InodeKey> {
+        None
+    }
+
+    fn make_entry(path: &Path, size: u64) -> FileEntry {
         FileEntry {
             path: path.to_path_buf(),
-            size: bytes.len() as u64,
+            size,
             extension: path
                 .extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("none")
                 .to_lowercase(),
             modified: SystemTime::now(),
+            inode: test_inode_key(path),
         }
     }
 
@@ -353,7 +430,7 @@ mod tests {
         let b = write_file(&dir.path().join("b.bin"), &payload);
         let groups = find(&[a, b], 0);
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].paths.len(), 2);
+        assert_eq!(groups[0].entries.len(), 2);
         assert_eq!(groups[0].size, 8192);
     }
 
@@ -384,7 +461,7 @@ mod tests {
         let c = write_file(&dir.path().join("c.bin"), &payload);
         let groups = find(&[a, b, c], 0);
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].paths.len(), 3);
+        assert_eq!(groups[0].entries.len(), 3);
     }
 
     #[test]
@@ -433,7 +510,7 @@ mod tests {
 
         let groups = find(&[a, b, c], 0);
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].paths.len(), 2);
+        assert_eq!(groups[0].entries.len(), 2);
     }
 
     #[test]
@@ -446,10 +523,57 @@ mod tests {
         let groups = find(&[z, a, m], 0);
         assert_eq!(groups.len(), 1);
         let names: Vec<_> = groups[0]
-            .paths
+            .entries
             .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .map(|e| {
+                e.primary_path()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         assert_eq!(names, vec!["a.bin", "m.bin", "z.bin"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlinks_collapse_into_one_entry() {
+        let dir = tempdir().unwrap();
+        let payload = vec![5u8; 4096];
+        let a = write_file(&dir.path().join("a.bin"), &payload);
+        fs::hard_link(dir.path().join("a.bin"), dir.path().join("a_link.bin")).unwrap();
+        let a_link = make_entry(&dir.path().join("a_link.bin"), payload.len() as u64);
+        let b = write_file(&dir.path().join("b.bin"), &payload);
+
+        let groups = find(&[a, a_link, b], 0);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].entries.len(),
+            2,
+            "hardlinks must collapse into a single entry"
+        );
+        assert_eq!(groups[0].reclaimable(), 4096);
+        let hardlinked = groups[0]
+            .entries
+            .iter()
+            .find(|e| e.paths.len() == 2)
+            .expect("one entry should expose both hardlink paths");
+        assert_eq!(hardlinked.paths.len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pure_hardlinks_are_not_reported_as_dupes() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("a.bin"), &vec![6u8; 4096]);
+        fs::hard_link(dir.path().join("a.bin"), dir.path().join("a_link.bin")).unwrap();
+        let a = make_entry(&dir.path().join("a.bin"), 4096);
+        let a_link = make_entry(&dir.path().join("a_link.bin"), 4096);
+        let groups = find(&[a, a_link], 0);
+        assert!(
+            groups.is_empty(),
+            "a single inode with multiple hardlinks wastes no space"
+        );
     }
 }
