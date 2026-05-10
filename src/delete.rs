@@ -1,9 +1,9 @@
+use crate::walker::FileEntry;
+use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
+use owo_colors::OwoColorize;
 use std::fs;
 use std::io;
 use std::time::{Duration, SystemTime};
-use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
-use owo_colors::OwoColorize;
-use crate::walker::FileEntry;
 
 pub fn run(files: &[FileEntry], stale_years: u64) -> io::Result<()> {
     let now = SystemTime::now();
@@ -29,7 +29,7 @@ pub fn run(files: &[FileEntry], stale_years: u64) -> io::Result<()> {
         return Ok(());
     }
 
-    stale.sort_by(|a, b| b.size.cmp(&a.size));
+    stale.sort_by_key(|f| std::cmp::Reverse(f.size));
 
     let total_size: u64 = stale.iter().map(|f| f.size).sum();
 
@@ -43,19 +43,14 @@ pub fn run(files: &[FileEntry], stale_years: u64) -> io::Result<()> {
     );
     println!(
         "  {}",
-        "Tick the files you want to permanently delete. Space to toggle, Enter to confirm.".dimmed()
+        "Tick the files you want to permanently delete. Space to toggle, Enter to confirm."
+            .dimmed()
     );
     println!();
 
     let labels: Vec<String> = stale
         .iter()
-        .map(|f| {
-            format!(
-                "{:>10}  {}",
-                format_bytes(f.size),
-                f.path.display()
-            )
-        })
+        .map(|f| format!("{:>10}  {}", format_bytes(f.size), f.path.display()))
         .collect();
 
     let selected = MultiSelect::with_theme(&ColorfulTheme::default())

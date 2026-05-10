@@ -1,13 +1,14 @@
-mod walker;
-mod classifier;
 mod analyzer;
-mod renderer;
-mod dupes;
+mod classifier;
 mod delete;
+mod dupes;
+mod renderer;
+mod walker;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use walker::WalkOptions;
 
 #[derive(Parser)]
 #[command(name = "bigfiles", version, about = "Find what's eating your disk")]
@@ -31,7 +32,15 @@ struct Cli {
     #[arg(short, long, global = true)]
     depth: Option<usize>,
 
-    /// Output raw JSON (only for default scan)
+    /// Do not respect .gitignore / .ignore files
+    #[arg(long, global = true)]
+    no_ignore: bool,
+
+    /// Show the N largest individual files per category (default scan only)
+    #[arg(short, long)]
+    top: Option<usize>,
+
+    /// Output raw JSON (default scan only)
     #[arg(short, long)]
     json: bool,
 }
@@ -63,8 +72,16 @@ fn main() -> ExitCode {
     }
 }
 
+fn walk_opts(cli: &Cli) -> WalkOptions {
+    WalkOptions {
+        skip_hidden: cli.skip_hidden,
+        max_depth: cli.depth,
+        respect_ignore: !cli.no_ignore,
+    }
+}
+
 fn run_scan(cli: &Cli) -> ExitCode {
-    let scan = walker::collect(&cli.path, cli.skip_hidden, cli.depth);
+    let scan = walker::collect(&cli.path, walk_opts(cli));
     let total: u64 = scan.files.iter().map(|f| f.size).sum();
     let summaries = analyzer::analyze(&scan.files, cli.stale_years);
 
@@ -78,19 +95,22 @@ fn run_scan(cli: &Cli) -> ExitCode {
         }
     } else {
         renderer::render(&summaries, total, scan.skipped, &cli.path);
+        if let Some(n) = cli.top {
+            renderer::render_top(&scan.files, n);
+        }
     }
     ExitCode::SUCCESS
 }
 
 fn run_dupes(cli: &Cli, min_size: u64) -> ExitCode {
-    let scan = walker::collect(&cli.path, cli.skip_hidden, cli.depth);
+    let scan = walker::collect(&cli.path, walk_opts(cli));
     let groups = dupes::find(&scan.files, min_size);
     dupes::render(&groups, &cli.path);
     ExitCode::SUCCESS
 }
 
 fn run_delete(cli: &Cli) -> ExitCode {
-    let scan = walker::collect(&cli.path, cli.skip_hidden, cli.depth);
+    let scan = walker::collect(&cli.path, walk_opts(cli));
     match delete::run(&scan.files, cli.stale_years) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

@@ -1,14 +1,19 @@
 # bigfiles
 
-A small Rust CLI that walks a directory, groups files by type, flags stale ones, and renders a color-coded summary in the terminal.
+[![CI](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml)
+
+A small Rust CLI that walks a directory in parallel, groups files by type, flags stale ones, finds duplicates, and renders a color-coded summary in the terminal.
 
 ## What it does
 
-- Walks a directory tree and collects file sizes, extensions, and modified timestamps
+- Walks a directory tree **in parallel** and collects file sizes, extensions, and modified timestamps
+- Respects `.gitignore` and `.ignore` files by default (use `--no-ignore` to disable)
 - Groups files into categories: video, images, archives, audio, documents, code, junk, other
 - Flags files not modified in the last N years as stale
-- Renders a color-coded table with size bars, or emits JSON for piping
-- Reports how many entries were skipped due to permission errors
+- Renders a color-coded table with size bars, optionally with the largest files per category
+- Finds duplicate files by content hash and lets you reclaim wasted space
+- Interactively deletes stale files with explicit confirmation
+- Emits JSON for piping into other tools
 
 ## Install
 
@@ -39,12 +44,24 @@ bigfiles ~/Downloads
 # Skip hidden files and dirs, only descend 3 levels
 bigfiles ~ --skip-hidden --depth 3
 
+# Show the 5 largest files per category alongside the summary
+bigfiles ~/Downloads --top 5
+
+# Don't respect .gitignore / .ignore
+bigfiles ~/some-project --no-ignore
+
 # Treat anything not modified in 5+ years as stale (default: 2)
 bigfiles ~/Documents --stale-years 5
 
 # Pipe JSON into jq
 bigfiles ~/Movies --json | jq '.[] | select(.stale_size > 1000000000)'
 ```
+
+### .gitignore awareness
+
+By default bigfiles uses [the same `ignore` crate that ripgrep uses](https://crates.io/crates/ignore), so `.gitignore`, `.ignore`, and global git excludes are respected automatically. Scanning a Rust project? `target/` is skipped. Node project? `node_modules` is skipped. No flag needed.
+
+Use `--no-ignore` to walk everything regardless.
 
 ### Find duplicate files
 
@@ -76,6 +93,8 @@ The flow: list → tick boxes (Space) → Enter → review summary → type `y` 
 | `-s, --stale-years <N>` | `2` | Flag files not modified in this many years as stale |
 | `-H, --skip-hidden` | off | Skip dotfiles and dot-directories |
 | `-d, --depth <N>` | unlimited | Limit traversal depth (1 = only files directly in root) |
+| `--no-ignore` | off | Do not respect `.gitignore` / `.ignore` files |
+| `-t, --top <N>` | off | Show N largest files per category (default scan only) |
 | `-j, --json` | off | Emit raw JSON (default scan only) |
 
 ## Example output
@@ -113,11 +132,11 @@ src/
 
 ## Future ideas
 
-- `--top N` to list the largest files within each category
-- `--ignore` glob patterns (respect `.gitignore` via the `ignore` crate)
-- Parallel walk with `rayon` + `jwalk` for large trees
+- Per-directory breakdown ("top 10 heaviest subdirectories")
+- `--watch` mode that re-scans on an interval
 - A full TUI with `ratatui` (expand/collapse categories, arrow-key navigation)
 - Persistent index in `~/.cache/bigfiles/` to diff scans over time
+- Homebrew formula
 
 ## License
 

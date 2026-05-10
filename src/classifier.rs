@@ -1,14 +1,14 @@
 pub fn categorize(ext: &str) -> &'static str {
     match ext {
-        "mp4" | "mov" | "mkv" | "avi" | "webm"           => "video",
+        "mp4" | "mov" | "mkv" | "avi" | "webm" => "video",
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "heic" => "images",
-        "zip" | "tar" | "gz" | "rar" | "7z" | "dmg"      => "archives",
-        "mp3" | "flac" | "wav" | "aac" | "m4a"           => "audio",
-        "pdf" | "doc" | "docx" | "pages" | "epub"        => "documents",
-        "rs" | "py" | "js" | "ts" | "go" | "swift"       => "code",
-        "log" | "tmp" | "cache" | "bak"                  => "junk",
-        "none"                                           => "no extension",
-        _                                                => "other",
+        "zip" | "tar" | "gz" | "rar" | "7z" | "dmg" => "archives",
+        "mp3" | "flac" | "wav" | "aac" | "m4a" => "audio",
+        "pdf" | "doc" | "docx" | "pages" | "epub" => "documents",
+        "rs" | "py" | "js" | "ts" | "go" | "swift" => "code",
+        "log" | "tmp" | "cache" | "bak" => "junk",
+        "none" => "no extension",
+        _ => "other",
     }
 }
 

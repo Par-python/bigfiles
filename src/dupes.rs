@@ -1,9 +1,9 @@
+use crate::walker::FileEntry;
+use owo_colors::OwoColorize;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use owo_colors::OwoColorize;
-use crate::walker::FileEntry;
 
 const PARTIAL_HASH_BYTES: u64 = 4096;
 
@@ -51,8 +51,7 @@ pub fn find(files: &[FileEntry], min_size: u64) -> Vec<DupeGroup> {
                 if full_group.len() < 2 {
                     continue;
                 }
-                let mut paths: Vec<PathBuf> =
-                    full_group.iter().map(|f| f.path.clone()).collect();
+                let mut paths: Vec<PathBuf> = full_group.iter().map(|f| f.path.clone()).collect();
                 paths.sort();
                 groups.push(DupeGroup { size, paths });
             }
@@ -77,7 +76,8 @@ fn partial_hash(path: &Path) -> Option<[u8; 32]> {
 
     let meta = file.metadata().ok()?;
     if meta.len() > PARTIAL_HASH_BYTES * 2 {
-        file.seek(SeekFrom::End(-(PARTIAL_HASH_BYTES as i64))).ok()?;
+        file.seek(SeekFrom::End(-(PARTIAL_HASH_BYTES as i64)))
+            .ok()?;
         let n = file.read(&mut buf).ok()?;
         hasher.update(&buf[..n]);
     }
@@ -102,7 +102,11 @@ fn full_hash(path: &Path) -> Option<[u8; 32]> {
 pub fn render(groups: &[DupeGroup], root: &Path) {
     println!();
     if groups.is_empty() {
-        println!("  {} no duplicates found in {}", "✓".green(), root.display().dimmed());
+        println!(
+            "  {} no duplicates found in {}",
+            "✓".green(),
+            root.display().dimmed()
+        );
         println!();
         return;
     }

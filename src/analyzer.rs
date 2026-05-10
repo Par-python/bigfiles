@@ -1,8 +1,8 @@
+use crate::classifier::categorize;
+use crate::walker::FileEntry;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
-use serde::Serialize;
-use crate::walker::FileEntry;
-use crate::classifier::categorize;
 
 #[derive(Serialize)]
 pub struct CategorySummary {
@@ -40,6 +40,6 @@ pub fn analyze(files: &[FileEntry], stale_years: u64) -> Vec<CategorySummary> {
     }
 
     let mut summaries: Vec<CategorySummary> = map.into_values().collect();
-    summaries.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+    summaries.sort_by_key(|s| std::cmp::Reverse(s.total_size));
     summaries
 }
