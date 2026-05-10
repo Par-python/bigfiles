@@ -5,13 +5,30 @@ mod dupes;
 mod renderer;
 mod walker;
 
+use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use walker::WalkOptions;
 
+fn help_styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Cyan.on_default() | Effects::BOLD)
+        .usage(AnsiColor::Cyan.on_default() | Effects::BOLD)
+        .literal(AnsiColor::Green.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Magenta.on_default())
+        .valid(AnsiColor::Green.on_default())
+        .invalid(AnsiColor::Red.on_default() | Effects::BOLD)
+        .error(AnsiColor::Red.on_default() | Effects::BOLD)
+}
+
 #[derive(Parser)]
-#[command(name = "bigfiles", version, about = "Find what's eating your disk")]
+#[command(
+    name = "bigfiles",
+    version,
+    about = "Find what's eating your disk",
+    styles = help_styles()
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

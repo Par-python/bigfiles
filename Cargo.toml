@@ -1,7 +1,8 @@
 [package]
 name = "bigfiles"
-version = "0.2.1"
+version = "0.2.5"
 edition = "2021"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 ignore     = "0.4"
