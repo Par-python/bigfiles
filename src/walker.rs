@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use walkdir::WalkDir;
 
 pub struct FileEntry {
+    pub path: PathBuf,
     pub size: u64,
     pub extension: String,
     pub modified: SystemTime,
@@ -13,11 +14,16 @@ pub struct ScanResult {
     pub skipped: usize,
 }
 
-pub fn collect(root: &Path, skip_hidden: bool) -> ScanResult {
+pub fn collect(root: &Path, skip_hidden: bool, max_depth: Option<usize>) -> ScanResult {
     let mut files = Vec::new();
     let mut skipped = 0usize;
 
-    let walker = WalkDir::new(root).into_iter().filter_entry(move |e| {
+    let mut walker = WalkDir::new(root);
+    if let Some(d) = max_depth {
+        walker = walker.max_depth(d);
+    }
+
+    let iter = walker.into_iter().filter_entry(move |e| {
         if !skip_hidden {
             return true;
         }
@@ -27,7 +33,7 @@ pub fn collect(root: &Path, skip_hidden: bool) -> ScanResult {
         !e.file_name().to_string_lossy().starts_with('.')
     });
 
-    for entry in walker {
+    for entry in iter {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => {
@@ -64,6 +70,7 @@ pub fn collect(root: &Path, skip_hidden: bool) -> ScanResult {
             .to_lowercase();
 
         files.push(FileEntry {
+            path: entry.path().to_path_buf(),
             size: meta.len(),
             extension,
             modified,

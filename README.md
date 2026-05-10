@@ -36,8 +36,8 @@ bigfiles
 # Scan a specific path
 bigfiles ~/Downloads
 
-# Skip hidden files and dirs
-bigfiles ~ --skip-hidden
+# Skip hidden files and dirs, only descend 3 levels
+bigfiles ~ --skip-hidden --depth 3
 
 # Treat anything not modified in 5+ years as stale (default: 2)
 bigfiles ~/Documents --stale-years 5
@@ -46,14 +46,37 @@ bigfiles ~/Documents --stale-years 5
 bigfiles ~/Movies --json | jq '.[] | select(.stale_size > 1000000000)'
 ```
 
-### Flags
+### Find duplicate files
+
+`bigfiles dupes` finds files with identical content. It uses a fast three-stage check: group by size → hash first/last 4 KB → full BLAKE3 hash on remaining candidates. Almost no false positives, fast on large trees.
+
+```bash
+# Find dupes >= 1 MB in Downloads
+bigfiles dupes ~/Downloads --min-size 1048576
+
+# Default min-size is 1 KB; tune as needed
+bigfiles dupes ~/Documents --min-size 1
+```
+
+### Delete stale files (interactive)
+
+`bigfiles delete` shows you every file older than `--stale-years` (default 2) in an interactive checklist. You tick which ones to remove, see a confirmation summary, and only then are files deleted. **Files are removed permanently — they do not go to Trash.**
+
+```bash
+bigfiles delete ~/Downloads --stale-years 3
+```
+
+The flow: list → tick boxes (Space) → Enter → review summary → type `y` to confirm. Hit Ctrl-C any time to bail.
+
+### Flags (global)
 
 | Flag | Default | Description |
 |---|---|---|
 | `<PATH>` | `.` | Directory to scan |
 | `-s, --stale-years <N>` | `2` | Flag files not modified in this many years as stale |
 | `-H, --skip-hidden` | off | Skip dotfiles and dot-directories |
-| `-j, --json` | off | Emit raw JSON instead of the table |
+| `-d, --depth <N>` | unlimited | Limit traversal depth (1 = only files directly in root) |
+| `-j, --json` | off | Emit raw JSON (default scan only) |
 
 ## Example output
 
@@ -79,19 +102,22 @@ bigfiles uses the file's **modified time** (`mtime`), not access time. Many file
 
 ```
 src/
-  main.rs        # CLI entry, arg parsing
+  main.rs        # CLI entry, subcommand dispatch
   walker.rs      # Directory traversal, file collection
   classifier.rs  # Extension → category mapping
   analyzer.rs    # Grouping, sorting, stale detection
-  renderer.rs    # Terminal output + byte formatting
+  renderer.rs    # Default scan output
+  dupes.rs       # Duplicate detection + rendering
+  delete.rs      # Interactive stale-file deletion
 ```
 
 ## Future ideas
 
 - `--top N` to list the largest files within each category
-- `--delete` flag with an interactive confirmation list for stale files
 - `--ignore` glob patterns (respect `.gitignore` via the `ignore` crate)
+- Parallel walk with `rayon` + `jwalk` for large trees
 - A full TUI with `ratatui` (expand/collapse categories, arrow-key navigation)
+- Persistent index in `~/.cache/bigfiles/` to diff scans over time
 
 ## License
 
