@@ -94,8 +94,19 @@ The flow: list → tick boxes (Space) → Enter → review summary → type `y` 
 | `-H, --skip-hidden` | off | Skip dotfiles and dot-directories |
 | `-d, --depth <N>` | unlimited | Limit traversal depth (1 = only files directly in root) |
 | `--no-ignore` | off | Do not respect `.gitignore` / `.ignore` files |
+| `--no-pager` | off | Don't auto-page output through `$PAGER` |
 | `-t, --top <N>` | off | Show N largest files per category (default scan only) |
 | `-j, --json` | off | Emit raw JSON (default scan only) |
+
+### Pager
+
+When stdout is a real terminal, bigfiles auto-pages output through `$PAGER` (default `less -FRX`) — same UX as `git log`. Short output passes through instantly thanks to `-F`; long output (e.g. `bigfiles ~ --top 20`) opens scrollable. Use arrow keys / `/` to search / `q` to quit.
+
+The pager is automatically skipped when:
+- output is piped (`bigfiles ... | jq` works as expected)
+- `--json` is set
+- the `delete` subcommand is running (interactive)
+- `--no-pager` is passed
 
 ## Example output
 

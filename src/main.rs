@@ -36,6 +36,10 @@ struct Cli {
     #[arg(long, global = true)]
     no_ignore: bool,
 
+    /// Do not auto-page output through $PAGER (default: less -FRX)
+    #[arg(long, global = true)]
+    no_pager: bool,
+
     /// Show the N largest individual files per category (default scan only)
     #[arg(short, long)]
     top: Option<usize>,
@@ -80,6 +84,13 @@ fn walk_opts(cli: &Cli) -> WalkOptions {
     }
 }
 
+fn setup_pager(cli: &Cli) {
+    if cli.no_pager {
+        return;
+    }
+    pager::Pager::with_default_pager("less -FRX").setup();
+}
+
 fn run_scan(cli: &Cli) -> ExitCode {
     let scan = walker::collect(&cli.path, walk_opts(cli));
     let total: u64 = scan.files.iter().map(|f| f.size).sum();
@@ -94,6 +105,7 @@ fn run_scan(cli: &Cli) -> ExitCode {
             }
         }
     } else {
+        setup_pager(cli);
         renderer::render(&summaries, total, scan.skipped, &cli.path);
         if let Some(n) = cli.top {
             renderer::render_top(&scan.files, n);
@@ -105,6 +117,7 @@ fn run_scan(cli: &Cli) -> ExitCode {
 fn run_dupes(cli: &Cli, min_size: u64) -> ExitCode {
     let scan = walker::collect(&cli.path, walk_opts(cli));
     let groups = dupes::find(&scan.files, min_size);
+    setup_pager(cli);
     dupes::render(&groups, &cli.path);
     ExitCode::SUCCESS
 }
