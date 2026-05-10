@@ -1,0 +1,111 @@
+use std::path::Path;
+use owo_colors::OwoColorize;
+use crate::analyzer::CategorySummary;
+
+pub fn render(summaries: &[CategorySummary], total: u64, skipped: usize, root: &Path) {
+    println!();
+    println!(
+        "  {} {}  {}",
+        "bigfiles".bold(),
+        format_bytes(total).bold().cyan(),
+        root.display().dimmed()
+    );
+    println!();
+    println!(
+        "  {:<14} {:>9}  {:<24} {:>7}    {}",
+        "category".dimmed(),
+        "size".dimmed(),
+        "".dimmed(),
+        "files".dimmed(),
+        "stale".dimmed(),
+    );
+    println!("  {}", "─".repeat(72).dimmed());
+
+    for s in summaries {
+        let pct = if total > 0 {
+            (s.total_size as f64 / total as f64 * 100.0) as usize
+        } else {
+            0
+        };
+        let bar_len = pct / 4;
+        let bar = "█".repeat(bar_len);
+
+        let stale_note = if s.stale_size > 0 {
+            format!(
+                "⚠ {} ({} files)",
+                format_bytes(s.stale_size),
+                s.stale_count
+            )
+        } else {
+            String::new()
+        };
+
+        let pad = 14usize.saturating_sub(s.category.chars().count());
+        let cat_colored = paint_category(&s.category);
+        println!(
+            "  {}{} {:>9}  {:<24} {:>7}    {}",
+            cat_colored,
+            " ".repeat(pad),
+            format_bytes(s.total_size),
+            bar,
+            s.file_count,
+            stale_note.yellow(),
+        );
+    }
+    println!();
+    if skipped > 0 {
+        println!(
+            "  {} {} {}",
+            "note:".dimmed(),
+            skipped.to_string().yellow(),
+            "entries skipped (permission denied or unreadable)".dimmed()
+        );
+        println!();
+    }
+}
+
+fn paint_category(cat: &str) -> String {
+    match cat {
+        "video"        => cat.red().to_string(),
+        "images"       => cat.magenta().to_string(),
+        "archives"     => cat.yellow().to_string(),
+        "audio"        => cat.cyan().to_string(),
+        "documents"    => cat.blue().to_string(),
+        "code"         => cat.green().to_string(),
+        "junk"         => cat.bright_red().to_string(),
+        "no extension" => cat.dimmed().to_string(),
+        _              => cat.white().to_string(),
+    }
+}
+
+fn format_bytes(b: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    const TB: u64 = 1024 * GB;
+    if b < KB {
+        format!("{} B", b)
+    } else if b < MB {
+        format!("{:.1} KB", b as f64 / KB as f64)
+    } else if b < GB {
+        format!("{:.1} MB", b as f64 / MB as f64)
+    } else if b < TB {
+        format!("{:.2} GB", b as f64 / GB as f64)
+    } else {
+        format!("{:.2} TB", b as f64 / TB as f64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_bytes_scales() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
+    }
+}
