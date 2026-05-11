@@ -3,6 +3,7 @@ pub mod classifier;
 pub mod dupes;
 pub mod format;
 pub mod renderer;
+pub mod tui;
 pub mod walker;
 
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -9,6 +9,7 @@ A small Rust CLI that walks a directory in parallel, groups files by type, flags
 
 ## What it does
 
+- **Interactive TUI** (`bigfiles tui`) — ncdu-style directory browser with arrow-key navigation
 - Walks a directory tree **in parallel** and collects file sizes, extensions, and modified timestamps
 - Respects `.gitignore` and `.ignore` files by default (use `--no-ignore` to disable)
 - Skips symlinks (no double-counting, no follow-link footguns)
@@ -99,6 +100,16 @@ By default bigfiles uses [the same `ignore` crate that ripgrep uses](https://cra
 
 Use `--no-ignore` to walk everything regardless.
 
+### Interactive TUI
+
+`bigfiles tui <path>` opens a full-screen ncdu-style directory browser. Sizes are aggregated per directory; the largest entries float to the top.
+
+```bash
+bigfiles tui ~
+```
+
+Keys: `↑/↓` (or `j/k`) move • `Enter`/`→` descend into directory • `←`/`Backspace` go up • `q`/`Esc` quit • `?` toggle help.
+
 ### Find duplicate files
 
 `bigfiles dupes` finds files with identical content. It uses a fast three-stage check, parallelized with `rayon`:
@@ -157,6 +168,8 @@ The flow: list → tick boxes (Space) → Enter → review summary → type `y` 
 | `--no-ignore` | off | Do not respect `.gitignore` / `.ignore` files |
 | `--no-pager` | off | Don't auto-page output through `$PAGER` |
 | `-e, --exclude <GLOB>` | none | Skip files/dirs matching this glob; repeatable |
+| `--units <STYLE>` | `default` | Byte unit style: `default` (1024, KB/MB), `iec` (1024, KiB/MiB), `si` (1000, KB/MB) |
+| `--color <WHEN>` | `auto` | Color output: `auto`, `always`, `never`. Also respects `NO_COLOR`. |
 | `-t, --top <N>` | off | Show N largest files per category (default scan only) |
 | `-j, --json` | off | Emit raw JSON (default scan only) |
 

@@ -1,7 +1,8 @@
 mod delete;
 
+use bigfiles::format::Units;
 use bigfiles::walker::{ScanResult, WalkOptions};
-use bigfiles::{analyzer, dupes, renderer, walker, INTERRUPTED};
+use bigfiles::{analyzer, dupes, format, renderer, walker, INTERRUPTED};
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -66,6 +67,14 @@ struct Cli {
     #[arg(short = 'e', long = "exclude", global = true, value_name = "GLOB")]
     excludes: Vec<String>,
 
+    /// Byte unit style: default (1024-based, KB/MB), iec (1024, KiB/MiB), si (1000, KB/MB)
+    #[arg(long, global = true, value_name = "STYLE", default_value = "default")]
+    units: String,
+
+    /// Color output: auto (default), always, never. Respects NO_COLOR env var.
+    #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
+    color: String,
+
     /// Show the N largest individual files per category (default scan only)
     #[arg(short, long)]
     top: Option<usize>,
@@ -89,6 +98,8 @@ enum Command {
     },
     /// Interactively delete stale files
     Delete,
+    /// Interactive directory browser (ncdu-style)
+    Tui,
 }
 
 fn main() -> ExitCode {
@@ -102,6 +113,22 @@ fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
+
+    let units = match cli.units.as_str() {
+        "iec" => Units::Iec,
+        "si" => Units::Si,
+        "default" => Units::Default,
+        other => {
+            eprintln!(
+                "bigfiles: invalid --units {:?} (expected: default, iec, si)",
+                other
+            );
+            return ExitCode::from(EXIT_USAGE_ERROR);
+        }
+    };
+    format::set_units(units);
+
+    apply_color_choice(&cli.color);
 
     if !cli.path.exists() {
         eprintln!("bigfiles: path does not exist: {}", cli.path.display());
@@ -118,6 +145,7 @@ fn main() -> ExitCode {
         None => run_scan(&cli),
         Some(Command::Dupes { min_size, delete }) => run_dupes(&cli, *min_size, *delete),
         Some(Command::Delete) => run_delete(&cli),
+        Some(Command::Tui) => run_tui(&cli),
     }
 }
 
@@ -127,17 +155,44 @@ fn scan_with_progress(cli: &Cli, show_progress: bool) -> ScanResult {
     }
     let pb = ProgressBar::new_spinner();
     pb.set_style(
-        ProgressStyle::with_template("  {spinner:.cyan} scanning {pos} files...")
+        ProgressStyle::with_template("  {spinner:.cyan} {msg}")
             .unwrap_or_else(|_| ProgressStyle::default_spinner()),
     );
     pb.set_draw_target(indicatif::ProgressDrawTarget::stderr());
     pb.enable_steady_tick(Duration::from_millis(100));
     let result = walker::collect_with_progress(&cli.path, walk_opts(cli), {
         let pb = pb.clone();
-        move |n| pb.set_position(n as u64)
+        move |tick| {
+            let dir = tick.current_dir.display().to_string();
+            let trimmed = if dir.len() > 60 {
+                let start = dir.len() - 57;
+                format!("…{}", &dir[start..])
+            } else {
+                dir
+            };
+            pb.set_message(format!(
+                "scanned {} files, {} — {}",
+                bigfiles::format::count(tick.file_count),
+                bigfiles::format::bytes(tick.total_bytes),
+                trimmed
+            ));
+        }
     });
     pb.finish_and_clear();
     result
+}
+
+fn apply_color_choice(when: &str) {
+    use owo_colors::set_override;
+    if std::env::var_os("NO_COLOR").is_some() {
+        set_override(false);
+        return;
+    }
+    match when {
+        "always" => set_override(true),
+        "never" => set_override(false),
+        _ => {}
+    }
 }
 
 fn walk_opts(cli: &Cli) -> WalkOptions {
@@ -205,6 +260,17 @@ fn run_dupes(cli: &Cli, min_size: u64, delete: bool) -> ExitCode {
         setup_pager(cli);
         dupes::render(&groups, &cli.path);
         ExitCode::from(EXIT_SUCCESS)
+    }
+}
+
+fn run_tui(cli: &Cli) -> ExitCode {
+    let scan = scan_with_progress(cli, true);
+    match bigfiles::tui::run(&cli.path, &scan.files) {
+        Ok(()) => ExitCode::from(EXIT_SUCCESS),
+        Err(e) => {
+            eprintln!("bigfiles: tui failed: {}", e);
+            ExitCode::from(EXIT_RUNTIME_ERROR)
+        }
     }
 }
 

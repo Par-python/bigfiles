@@ -39,6 +39,12 @@ fn inode_key(_: &Metadata) -> Option<InodeKey> {
     None
 }
 
+pub struct ProgressTick<'a> {
+    pub file_count: usize,
+    pub total_bytes: u64,
+    pub current_dir: &'a Path,
+}
+
 pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
     collect_with_progress(root, opts, |_| {})
 }
@@ -46,11 +52,12 @@ pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
 pub fn collect_with_progress(
     root: &Path,
     opts: WalkOptions,
-    on_file: impl Fn(usize) + Sync,
+    on_tick: impl Fn(ProgressTick<'_>) + Sync,
 ) -> ScanResult {
     let merged: Mutex<Vec<FileEntry>> = Mutex::new(Vec::new());
     let skipped = AtomicUsize::new(0);
     let counter = AtomicUsize::new(0);
+    let bytes_counter = std::sync::atomic::AtomicU64::new(0);
 
     let mut builder = WalkBuilder::new(root);
     builder
@@ -96,7 +103,8 @@ pub fn collect_with_progress(
         let merged = &merged;
         let skipped = &skipped;
         let counter = &counter;
-        let on_file = &on_file;
+        let bytes_counter = &bytes_counter;
+        let on_tick = &on_tick;
         let mut buf = ThreadBuf {
             local: Vec::new(),
             merged,
@@ -150,8 +158,20 @@ pub fn collect_with_progress(
             });
 
             let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            let bytes_now = bytes_counter
+                .fetch_add(meta.len(), std::sync::atomic::Ordering::Relaxed)
+                + meta.len();
             if n.is_multiple_of(256) {
-                on_file(n);
+                let parent = buf
+                    .local
+                    .last()
+                    .and_then(|f| f.path.parent())
+                    .unwrap_or(std::path::Path::new(""));
+                on_tick(ProgressTick {
+                    file_count: n,
+                    total_bytes: bytes_now,
+                    current_dir: parent,
+                });
             }
 
             if buf.local.len() >= 1024 {
