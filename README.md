@@ -23,25 +23,6 @@ A small Rust CLI that walks a directory in parallel, groups files by type, flags
 
 ## Install
 
-### Homebrew (macOS / Linux)
-
-```bash
-brew install Par-python/bigfiles/bigfiles
-```
-
-That command auto-adds the tap on first run. To upgrade later:
-
-```bash
-brew upgrade bigfiles
-```
-
-To remove:
-
-```bash
-brew uninstall bigfiles
-brew untap Par-python/bigfiles
-```
-
 ### crates.io (requires Rust via [rustup](https://rustup.rs))
 
 ```bash
