@@ -1,6 +1,9 @@
 # bigfiles
 
 [![CI](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/bigfiles.svg)](https://crates.io/crates/bigfiles)
+[![Downloads](https://img.shields.io/crates/d/bigfiles.svg)](https://crates.io/crates/bigfiles)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
 A small Rust CLI that walks a directory in parallel, groups files by type, flags stale ones, finds duplicates (hardlink-aware), and renders a color-coded summary in the terminal. Cross-platform: Linux, macOS, Windows.
 
@@ -19,19 +22,40 @@ A small Rust CLI that walks a directory in parallel, groups files by type, flags
 
 ## Install
 
-**From crates.io** (requires Rust via [rustup](https://rustup.rs)):
-
-```bash
-cargo install bigfiles
-```
-
-**Homebrew** (macOS / Linux):
+### Homebrew (macOS / Linux)
 
 ```bash
 brew install Par-python/bigfiles/bigfiles
 ```
 
-**Pre-built binaries:** download from the [releases page](https://github.com/Par-python/bigfiles/releases) for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64).
+That command auto-adds the tap on first run. To upgrade later:
+
+```bash
+brew upgrade bigfiles
+```
+
+To remove:
+
+```bash
+brew uninstall bigfiles
+brew untap Par-python/bigfiles
+```
+
+### crates.io (requires Rust via [rustup](https://rustup.rs))
+
+```bash
+cargo install bigfiles
+```
+
+To upgrade:
+
+```bash
+cargo install bigfiles --force
+```
+
+### Pre-built binaries
+
+Download from the [releases page](https://github.com/Par-python/bigfiles/releases) for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64). Extract and move `bigfiles` (or `bigfiles.exe`) onto your `$PATH`.
 
 **From source:**
 
