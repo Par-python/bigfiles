@@ -19,19 +19,20 @@ A small Rust CLI that walks a directory in parallel, groups files by type, flags
 
 ## Install
 
-Requires Rust (install via [rustup](https://rustup.rs)).
+**From crates.io** (requires Rust via [rustup](https://rustup.rs)):
 
 ```bash
-git clone <this repo>
-cd bigfiles
-cargo install --path .
+cargo install bigfiles
 ```
 
-Or just build the release binary:
+**Pre-built binaries:** download from the [releases page](https://github.com/Par-python/bigfiles/releases) for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64).
+
+**From source:**
 
 ```bash
-cargo build --release
-./target/release/bigfiles --help
+git clone https://github.com/Par-python/bigfiles
+cd bigfiles
+cargo install --path .
 ```
 
 ## Usage
@@ -49,14 +50,17 @@ bigfiles ~ --skip-hidden --depth 3
 # Show the 5 largest files per category alongside the summary
 bigfiles ~/Downloads --top 5
 
+# Exclude paths via glob (repeatable)
+bigfiles ~ --exclude 'node_modules' --exclude '*.log' --exclude 'target'
+
 # Don't respect .gitignore / .ignore
 bigfiles ~/some-project --no-ignore
 
 # Treat anything not modified in 5+ years as stale (default: 2)
 bigfiles ~/Documents --stale-years 5
 
-# Pipe JSON into jq
-bigfiles ~/Movies --json | jq '.[] | select(.stale_size > 1000000000)'
+# Pipe JSON into jq (envelope: { version, root, total_size, skipped, categories })
+bigfiles ~/Movies --json | jq '.categories[] | select(.stale_size > 1000000000)'
 ```
 
 ### .gitignore awareness
@@ -122,6 +126,7 @@ The flow: list → tick boxes (Space) → Enter → review summary → type `y` 
 | `-d, --depth <N>` | unlimited | Limit traversal depth (1 = only files directly in root) |
 | `--no-ignore` | off | Do not respect `.gitignore` / `.ignore` files |
 | `--no-pager` | off | Don't auto-page output through `$PAGER` |
+| `-e, --exclude <GLOB>` | none | Skip files/dirs matching this glob; repeatable |
 | `-t, --top <N>` | off | Show N largest files per category (default scan only) |
 | `-j, --json` | off | Emit raw JSON (default scan only) |
 
@@ -192,6 +197,15 @@ src/
 - Replace dupes with hardlinks (`--link` mode) instead of deleting
 - `--exclude <glob>` flag for ad-hoc exclusion beyond gitignore
 - Homebrew formula
+
+## Stability
+
+Starting with **1.0**, the CLI surface and JSON schema follow semver:
+
+- **CLI flags**: removing a flag, changing its short form, or changing default behavior requires a major version bump. New flags are minor.
+- **JSON output**: the `"version": 1` envelope is stable. Breaking changes ship as `"version": 2`. Adding new fields is minor.
+- **Exit codes**: `0` success, `1` runtime error, `2` usage error.
+- **Internal Rust API**: not stable. Use the binary, not the library crate.
 
 ## License
 

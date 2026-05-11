@@ -1,8 +1,16 @@
 [package]
 name = "bigfiles"
-version = "0.3.9"
+version = "1.0.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
+description = "Find what's eating your disk — a parallel directory scanner with category breakdown, stale-file flagging, and hardlink-aware duplicate detection."
+repository = "https://github.com/Par-python/bigfiles"
+homepage = "https://github.com/Par-python/bigfiles"
+readme = "README.md"
+keywords = ["cli", "disk", "duplicates", "filesystem", "deduplication"]
+categories = ["command-line-utilities", "filesystem"]
+authors = ["Jerome Pardo"]
+exclude = ["target/", ".github/", "deny.toml"]
 
 [dependencies]
 ignore     = "0.4"

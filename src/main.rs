@@ -58,6 +58,10 @@ struct Cli {
     #[arg(long, global = true)]
     no_pager: bool,
 
+    /// Exclude files/dirs matching this glob (repeatable). Example: --exclude 'node_modules' --exclude '*.log'
+    #[arg(short = 'e', long = "exclude", global = true, value_name = "GLOB")]
+    excludes: Vec<String>,
+
     /// Show the N largest individual files per category (default scan only)
     #[arg(short, long)]
     top: Option<usize>,
@@ -109,6 +113,7 @@ fn walk_opts(cli: &Cli) -> WalkOptions {
         skip_hidden: cli.skip_hidden,
         max_depth: cli.depth,
         respect_ignore: !cli.no_ignore,
+        exclude_globs: cli.excludes.clone(),
     }
 }
 
@@ -129,7 +134,14 @@ fn run_scan(cli: &Cli) -> ExitCode {
     let summaries = analyzer::analyze(&scan.files, cli.stale_years);
 
     if cli.json {
-        match serde_json::to_string_pretty(&summaries) {
+        let envelope = serde_json::json!({
+            "version": 1,
+            "root": cli.path.display().to_string(),
+            "total_size": total,
+            "skipped": scan.skipped,
+            "categories": summaries,
+        });
+        match serde_json::to_string_pretty(&envelope) {
             Ok(s) => println!("{}", s),
             Err(e) => {
                 eprintln!("bigfiles: failed to serialize JSON: {}", e);
