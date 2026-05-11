@@ -1,5 +1,5 @@
-use crate::format::bytes as format_bytes;
-use crate::walker::FileEntry;
+use bigfiles::format::bytes as format_bytes;
+use bigfiles::walker::FileEntry;
 use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
 use owo_colors::OwoColorize;
 use std::fs;
@@ -100,7 +100,12 @@ pub fn run(files: &[FileEntry], stale_years: u64) -> io::Result<()> {
     let mut deleted = 0usize;
     let mut failed = 0usize;
     let mut freed = 0u64;
+    let mut interrupted = false;
     for f in to_delete {
+        if bigfiles::interrupted() {
+            interrupted = true;
+            break;
+        }
         match fs::remove_file(&f.path) {
             Ok(()) => {
                 deleted += 1;
@@ -114,6 +119,12 @@ pub fn run(files: &[FileEntry], stale_years: u64) -> io::Result<()> {
     }
 
     println!();
+    if interrupted {
+        println!(
+            "  {} interrupted; partial deletion only.",
+            "⚠".yellow().bold()
+        );
+    }
     println!(
         "  {} deleted {} files, freed {}",
         "✓".green(),

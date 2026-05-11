@@ -40,8 +40,17 @@ fn inode_key(_: &Metadata) -> Option<InodeKey> {
 }
 
 pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
+    collect_with_progress(root, opts, |_| {})
+}
+
+pub fn collect_with_progress(
+    root: &Path,
+    opts: WalkOptions,
+    on_file: impl Fn(usize) + Sync,
+) -> ScanResult {
     let merged: Mutex<Vec<FileEntry>> = Mutex::new(Vec::new());
     let skipped = AtomicUsize::new(0);
+    let counter = AtomicUsize::new(0);
 
     let mut builder = WalkBuilder::new(root);
     builder
@@ -86,6 +95,8 @@ pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
     builder.build_parallel().run(|| {
         let merged = &merged;
         let skipped = &skipped;
+        let counter = &counter;
+        let on_file = &on_file;
         let mut buf = ThreadBuf {
             local: Vec::new(),
             merged,
@@ -137,6 +148,11 @@ pub fn collect(root: &Path, opts: WalkOptions) -> ScanResult {
                 modified,
                 inode: inode_key(&meta),
             });
+
+            let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_multiple_of(256) {
+                on_file(n);
+            }
 
             if buf.local.len() >= 1024 {
                 if let Ok(mut guard) = buf.merged.lock() {

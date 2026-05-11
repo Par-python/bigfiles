@@ -1,0 +1,12 @@
+---
+source: src/renderer.rs
+expression: strip_ansi(&out)
+---
+
+  bigfiles 4.00 GB  /scan/root
+
+  category            size                             files    stale
+  ────────────────────────────────────────────────────────────────────────
+  video            3.26 GB  ████████████████████          12    
+  images          762.9 MB  ████                         230    ⚠ 95.4 MB (14 files)
+  code             48.8 KB                                30

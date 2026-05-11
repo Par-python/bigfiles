@@ -1,0 +1,10 @@
+---
+source: src/dupes.rs
+expression: strip_ansi(&out)
+---
+
+  bigfiles dupes /scan/root · 1 duplicate group, 1.0 MB reclaimable
+
+  [1] 2 copies × 1.0 MB = 1.0 MB wasted
+      /scan/root/a.bin
+      /scan/root/b.bin

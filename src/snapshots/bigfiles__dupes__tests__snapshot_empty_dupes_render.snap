@@ -1,0 +1,6 @@
+---
+source: src/dupes.rs
+expression: strip_ansi(&out)
+---
+
+  ✓ no duplicates found in /scan/root

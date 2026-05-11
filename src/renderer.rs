@@ -4,18 +4,31 @@ use crate::format::bytes as format_bytes;
 use crate::walker::FileEntry;
 use owo_colors::OwoColorize;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 pub fn render(summaries: &[CategorySummary], total: u64, skipped: usize, root: &Path) {
-    println!();
-    println!(
+    print!("{}", render_to_string(summaries, total, skipped, root));
+}
+
+pub fn render_to_string(
+    summaries: &[CategorySummary],
+    total: u64,
+    skipped: usize,
+    root: &Path,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
         "  {} {}  {}",
         "bigfiles".bold(),
         format_bytes(total).bold().cyan(),
         root.display().dimmed()
     );
-    println!();
-    println!(
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
         "  {:<14} {:>9}  {:<24} {:>7}    {}",
         "category".dimmed(),
         "size".dimmed(),
@@ -23,7 +36,7 @@ pub fn render(summaries: &[CategorySummary], total: u64, skipped: usize, root: &
         "files".dimmed(),
         "stale".dimmed(),
     );
-    println!("  {}", "─".repeat(72).dimmed());
+    let _ = writeln!(out, "  {}", "─".repeat(72).dimmed());
 
     for s in summaries {
         let pct = if total > 0 {
@@ -42,7 +55,8 @@ pub fn render(summaries: &[CategorySummary], total: u64, skipped: usize, root: &
 
         let pad = 14usize.saturating_sub(s.category.chars().count());
         let cat_colored = paint_category(&s.category);
-        println!(
+        let _ = writeln!(
+            out,
             "  {}{} {:>9}  {:<24} {:>7}    {}",
             cat_colored,
             " ".repeat(pad),
@@ -52,16 +66,18 @@ pub fn render(summaries: &[CategorySummary], total: u64, skipped: usize, root: &
             stale_note.yellow(),
         );
     }
-    println!();
+    let _ = writeln!(out);
     if skipped > 0 {
-        println!(
+        let _ = writeln!(
+            out,
             "  {} {} {}",
             "note:".dimmed(),
             skipped.to_string().yellow(),
             "entries skipped (permission denied or unreadable)".dimmed()
         );
-        println!();
+        let _ = writeln!(out);
     }
+    out
 }
 
 fn paint_category(cat: &str) -> String {
@@ -79,8 +95,13 @@ fn paint_category(cat: &str) -> String {
 }
 
 pub fn render_top(files: &[FileEntry], n: usize) {
+    print!("{}", render_top_to_string(files, n));
+}
+
+pub fn render_top_to_string(files: &[FileEntry], n: usize) -> String {
+    let mut out = String::new();
     if n == 0 || files.is_empty() {
-        return;
+        return out;
     }
 
     let mut by_cat: HashMap<&'static str, Vec<&FileEntry>> = HashMap::new();
@@ -96,24 +117,120 @@ pub fn render_top(files: &[FileEntry], n: usize) {
         b_size.cmp(&a_size)
     });
 
-    println!(
+    let _ = writeln!(
+        out,
         "  {} largest {} per category",
         "top".bold(),
         n.to_string().cyan()
     );
-    println!("  {}", "─".repeat(72).dimmed());
+    let _ = writeln!(out, "  {}", "─".repeat(72).dimmed());
 
     for (cat, mut entries) in cats {
         entries.sort_by_key(|f| std::cmp::Reverse(f.size));
         let cat_colored = paint_category(cat);
-        println!("  {}", cat_colored);
+        let _ = writeln!(out, "  {}", cat_colored);
         for f in entries.iter().take(n) {
-            println!(
+            let _ = writeln!(
+                out,
                 "    {:>10}  {}",
                 format_bytes(f.size),
                 f.path.display().to_string().dimmed()
             );
         }
-        println!();
+        let _ = writeln!(out);
+    }
+    out
+}
+
+#[cfg(test)]
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for nc in chars.by_ref() {
+                if nc.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyzer::CategorySummary;
+    use crate::walker::FileEntry;
+    use std::path::PathBuf;
+    use std::time::SystemTime;
+
+    fn entry(path: &str, size: u64, ext: &str) -> FileEntry {
+        FileEntry {
+            path: PathBuf::from(path),
+            size,
+            extension: ext.to_string(),
+            modified: SystemTime::UNIX_EPOCH,
+            inode: None,
+        }
+    }
+
+    fn summaries() -> Vec<CategorySummary> {
+        vec![
+            CategorySummary {
+                category: "video".to_string(),
+                total_size: 3_500_000_000,
+                file_count: 12,
+                stale_size: 0,
+                stale_count: 0,
+            },
+            CategorySummary {
+                category: "images".to_string(),
+                total_size: 800_000_000,
+                file_count: 230,
+                stale_size: 100_000_000,
+                stale_count: 14,
+            },
+            CategorySummary {
+                category: "code".to_string(),
+                total_size: 50_000,
+                file_count: 30,
+                stale_size: 0,
+                stale_count: 0,
+            },
+        ]
+    }
+
+    #[test]
+    fn snapshot_default_render() {
+        let out = render_to_string(&summaries(), 4_300_000_000, 3, Path::new("/scan/root"));
+        insta::assert_snapshot!(strip_ansi(&out));
+    }
+
+    #[test]
+    fn snapshot_default_render_no_skipped() {
+        let out = render_to_string(&summaries(), 4_300_000_000, 0, Path::new("/scan/root"));
+        insta::assert_snapshot!(strip_ansi(&out));
+    }
+
+    #[test]
+    fn snapshot_render_top() {
+        let files = vec![
+            entry("/scan/root/movie.mkv", 2_000_000_000, "mkv"),
+            entry("/scan/root/clip.mp4", 500_000_000, "mp4"),
+            entry("/scan/root/photo.jpg", 4_000_000, "jpg"),
+            entry("/scan/root/main.rs", 1024, "rs"),
+        ];
+        let out = render_top_to_string(&files, 2);
+        insta::assert_snapshot!(strip_ansi(&out));
+    }
+
+    #[test]
+    fn render_top_empty_returns_empty() {
+        assert_eq!(render_top_to_string(&[], 5), "");
+        assert_eq!(render_top_to_string(&[entry("/a", 1, "txt")], 0), "");
     }
 }

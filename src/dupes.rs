@@ -156,20 +156,28 @@ fn full_hash(path: &Path) -> Option<[u8; 32]> {
 }
 
 pub fn render(groups: &[DupeGroup], root: &Path) {
-    println!();
+    print!("{}", render_to_string(groups, root));
+}
+
+pub fn render_to_string(groups: &[DupeGroup], root: &Path) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out);
     if groups.is_empty() {
-        println!(
+        let _ = writeln!(
+            out,
             "  {} no duplicates found in {}",
             "✓".green(),
             root.display().dimmed()
         );
-        println!();
-        return;
+        let _ = writeln!(out);
+        return out;
     }
 
     let total_waste: u64 = groups.iter().map(|g| g.reclaimable()).sum();
 
-    println!(
+    let _ = writeln!(
+        out,
         "  {} {} {} {} duplicate group{}, {} reclaimable",
         "bigfiles dupes".bold(),
         root.display().dimmed(),
@@ -178,10 +186,11 @@ pub fn render(groups: &[DupeGroup], root: &Path) {
         if groups.len() == 1 { "" } else { "s" },
         format_bytes(total_waste).bold().yellow(),
     );
-    println!();
+    let _ = writeln!(out);
 
     for (i, g) in groups.iter().enumerate() {
-        println!(
+        let _ = writeln!(
+            out,
             "  {} {} copies × {} = {} wasted",
             format!("[{}]", i + 1).dimmed(),
             g.entries.len().to_string().cyan(),
@@ -189,17 +198,19 @@ pub fn render(groups: &[DupeGroup], root: &Path) {
             format_bytes(g.reclaimable()).yellow(),
         );
         for e in &g.entries {
-            println!("      {}", e.primary_path().display());
+            let _ = writeln!(out, "      {}", e.primary_path().display());
             for hl in e.paths.iter().skip(1) {
-                println!(
+                let _ = writeln!(
+                    out,
                     "        {} {}",
                     "↳ hardlink:".dimmed(),
                     hl.display().to_string().dimmed()
                 );
             }
         }
-        println!();
+        let _ = writeln!(out);
     }
+    out
 }
 
 pub fn delete_interactive(groups: &[DupeGroup], root: &Path) -> io::Result<()> {
@@ -330,7 +341,12 @@ pub fn delete_interactive(groups: &[DupeGroup], root: &Path) -> io::Result<()> {
     let mut deleted = 0usize;
     let mut failed = 0usize;
     let mut freed = 0u64;
+    let mut interrupted = false;
     for p in &to_delete {
+        if crate::interrupted() {
+            interrupted = true;
+            break;
+        }
         let meta = match fs::symlink_metadata(p) {
             Ok(m) => m,
             Err(e) => {
@@ -361,6 +377,12 @@ pub fn delete_interactive(groups: &[DupeGroup], root: &Path) -> io::Result<()> {
     }
 
     println!();
+    if interrupted {
+        println!(
+            "  {} interrupted; partial deletion only.",
+            "⚠".yellow().bold()
+        );
+    }
     println!(
         "  {} deleted {} files, freed {}",
         "✓".green(),
@@ -560,6 +582,46 @@ mod tests {
             .find(|e| e.paths.len() == 2)
             .expect("one entry should expose both hardlink paths");
         assert_eq!(hardlinked.paths.len(), 2);
+    }
+
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                for nc in chars.by_ref() {
+                    if nc.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn snapshot_empty_dupes_render() {
+        let out = render_to_string(&[], Path::new("/scan/root"));
+        insta::assert_snapshot!(strip_ansi(&out));
+    }
+
+    #[test]
+    fn snapshot_dupes_render_with_groups() {
+        let groups = vec![DupeGroup {
+            size: 1_048_576,
+            entries: vec![
+                DupeEntry {
+                    paths: vec![PathBuf::from("/scan/root/a.bin")],
+                },
+                DupeEntry {
+                    paths: vec![PathBuf::from("/scan/root/b.bin")],
+                },
+            ],
+        }];
+        let out = render_to_string(&groups, Path::new("/scan/root"));
+        insta::assert_snapshot!(strip_ansi(&out));
     }
 
     #[cfg(unix)]

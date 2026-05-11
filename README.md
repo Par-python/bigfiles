@@ -25,6 +25,12 @@ A small Rust CLI that walks a directory in parallel, groups files by type, flags
 cargo install bigfiles
 ```
 
+**Homebrew** (macOS / Linux):
+
+```bash
+brew install Par-python/bigfiles/bigfiles
+```
+
 **Pre-built binaries:** download from the [releases page](https://github.com/Par-python/bigfiles/releases) for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), and Windows (x86_64).
 
 **From source:**
@@ -195,8 +201,6 @@ src/
 - A full TUI with `ratatui` (expand/collapse categories, arrow-key navigation)
 - Persistent index in `~/.cache/bigfiles/` to diff scans over time
 - Replace dupes with hardlinks (`--link` mode) instead of deleting
-- `--exclude <glob>` flag for ad-hoc exclusion beyond gitignore
-- Homebrew formula
 
 ## Stability
 

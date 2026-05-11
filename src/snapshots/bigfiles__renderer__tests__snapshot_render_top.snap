@@ -1,0 +1,15 @@
+---
+source: src/renderer.rs
+expression: strip_ansi(&out)
+---
+  top largest 2 per category
+  ────────────────────────────────────────────────────────────────────────
+  video
+       1.86 GB  /scan/root/movie.mkv
+      476.8 MB  /scan/root/clip.mp4
+
+  images
+        3.8 MB  /scan/root/photo.jpg
+
+  code
+        1.0 KB  /scan/root/main.rs

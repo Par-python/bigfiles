@@ -1,16 +1,20 @@
-mod analyzer;
-mod classifier;
 mod delete;
-mod dupes;
-mod format;
-mod renderer;
-mod walker;
 
+use bigfiles::walker::{ScanResult, WalkOptions};
+use bigfiles::{analyzer, dupes, renderer, walker, INTERRUPTED};
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use walker::WalkOptions;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+const EXIT_SUCCESS: u8 = 0;
+const EXIT_RUNTIME_ERROR: u8 = 1;
+const EXIT_USAGE_ERROR: u8 = 2;
 
 fn help_styles() -> Styles {
     Styles::styled()
@@ -88,11 +92,20 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    let interrupt_flag = Arc::new(AtomicBool::new(false));
+    INTERRUPTED.set(interrupt_flag.clone()).ok();
+    {
+        let flag = interrupt_flag.clone();
+        let _ = ctrlc::set_handler(move || {
+            flag.store(true, Ordering::SeqCst);
+        });
+    }
+
     let cli = Cli::parse();
 
     if !cli.path.exists() {
         eprintln!("bigfiles: path does not exist: {}", cli.path.display());
-        return ExitCode::from(2);
+        return ExitCode::from(EXIT_USAGE_ERROR);
     }
 
     if cli.command.is_some() && (cli.top.is_some() || cli.json) {
@@ -106,6 +119,25 @@ fn main() -> ExitCode {
         Some(Command::Dupes { min_size, delete }) => run_dupes(&cli, *min_size, *delete),
         Some(Command::Delete) => run_delete(&cli),
     }
+}
+
+fn scan_with_progress(cli: &Cli, show_progress: bool) -> ScanResult {
+    if !show_progress || !std::io::stderr().is_terminal() {
+        return walker::collect(&cli.path, walk_opts(cli));
+    }
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::with_template("  {spinner:.cyan} scanning {pos} files...")
+            .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+    );
+    pb.set_draw_target(indicatif::ProgressDrawTarget::stderr());
+    pb.enable_steady_tick(Duration::from_millis(100));
+    let result = walker::collect_with_progress(&cli.path, walk_opts(cli), {
+        let pb = pb.clone();
+        move |n| pb.set_position(n as u64)
+    });
+    pb.finish_and_clear();
+    result
 }
 
 fn walk_opts(cli: &Cli) -> WalkOptions {
@@ -129,7 +161,7 @@ fn setup_pager(cli: &Cli) {
 fn setup_pager(_cli: &Cli) {}
 
 fn run_scan(cli: &Cli) -> ExitCode {
-    let scan = walker::collect(&cli.path, walk_opts(cli));
+    let scan = scan_with_progress(cli, !cli.json);
     let total: u64 = scan.files.iter().map(|f| f.size).sum();
     let summaries = analyzer::analyze(&scan.files, cli.stale_years);
 
@@ -145,7 +177,7 @@ fn run_scan(cli: &Cli) -> ExitCode {
             Ok(s) => println!("{}", s),
             Err(e) => {
                 eprintln!("bigfiles: failed to serialize JSON: {}", e);
-                return ExitCode::from(1);
+                return ExitCode::from(EXIT_RUNTIME_ERROR);
             }
         }
     } else {
@@ -155,34 +187,34 @@ fn run_scan(cli: &Cli) -> ExitCode {
             renderer::render_top(&scan.files, n);
         }
     }
-    ExitCode::SUCCESS
+    ExitCode::from(EXIT_SUCCESS)
 }
 
 fn run_dupes(cli: &Cli, min_size: u64, delete: bool) -> ExitCode {
-    let scan = walker::collect(&cli.path, walk_opts(cli));
+    let scan = scan_with_progress(cli, true);
     let groups = dupes::find(&scan.files, min_size);
     if delete {
         match dupes::delete_interactive(&groups, &cli.path) {
-            Ok(()) => ExitCode::SUCCESS,
+            Ok(()) => ExitCode::from(EXIT_SUCCESS),
             Err(e) => {
                 eprintln!("bigfiles: dupes delete failed: {}", e);
-                ExitCode::from(1)
+                ExitCode::from(EXIT_RUNTIME_ERROR)
             }
         }
     } else {
         setup_pager(cli);
         dupes::render(&groups, &cli.path);
-        ExitCode::SUCCESS
+        ExitCode::from(EXIT_SUCCESS)
     }
 }
 
 fn run_delete(cli: &Cli) -> ExitCode {
-    let scan = walker::collect(&cli.path, walk_opts(cli));
+    let scan = scan_with_progress(cli, true);
     match delete::run(&scan.files, cli.stale_years) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => ExitCode::from(EXIT_SUCCESS),
         Err(e) => {
             eprintln!("bigfiles: delete failed: {}", e);
-            ExitCode::from(1)
+            ExitCode::from(EXIT_RUNTIME_ERROR)
         }
     }
 }
