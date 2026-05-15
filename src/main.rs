@@ -1,10 +1,11 @@
 mod delete;
 
+use bigfiles::analyzer::SortKey;
 use bigfiles::format::Units;
 use bigfiles::walker::{ScanResult, WalkOptions};
 use bigfiles::{analyzer, dupes, format, renderer, walker, INTERRUPTED};
 use clap::builder::styling::{AnsiColor, Effects, Styles};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -82,6 +83,36 @@ struct Cli {
     /// Output raw JSON (default scan only)
     #[arg(short, long)]
     json: bool,
+
+    /// Sort categories by: size, count, stale-size, stale-count, name (default scan only)
+    #[arg(long, value_enum, default_value_t = SortKeyArg::Size)]
+    sort: SortKeyArg,
+
+    /// Reverse the sort order (default scan only)
+    #[arg(long)]
+    reverse: bool,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+#[clap(rename_all = "kebab-case")]
+enum SortKeyArg {
+    Size,
+    Count,
+    StaleSize,
+    StaleCount,
+    Name,
+}
+
+impl From<SortKeyArg> for SortKey {
+    fn from(v: SortKeyArg) -> Self {
+        match v {
+            SortKeyArg::Size => SortKey::Size,
+            SortKeyArg::Count => SortKey::Count,
+            SortKeyArg::StaleSize => SortKey::StaleSize,
+            SortKeyArg::StaleCount => SortKey::StaleCount,
+            SortKeyArg::Name => SortKey::Name,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -95,6 +126,14 @@ enum Command {
         /// Interactively delete duplicate copies (keep one per group)
         #[arg(long)]
         delete: bool,
+
+        /// Skip the persistent hash cache (read and write disabled for this run)
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Delete the persistent hash cache before running
+        #[arg(long)]
+        clear_cache: bool,
     },
     /// Interactively delete stale files
     Delete,
@@ -135,15 +174,21 @@ fn main() -> ExitCode {
         return ExitCode::from(EXIT_USAGE_ERROR);
     }
 
-    if cli.command.is_some() && (cli.top.is_some() || cli.json) {
+    let non_default_sort = !matches!(cli.sort, SortKeyArg::Size) || cli.reverse;
+    if cli.command.is_some() && (cli.top.is_some() || cli.json || non_default_sort) {
         eprintln!(
-            "bigfiles: --top and --json only apply to the default scan; ignoring for this subcommand"
+            "bigfiles: --top, --json, --sort, --reverse only apply to the default scan; ignoring for this subcommand"
         );
     }
 
     match &cli.command {
         None => run_scan(&cli),
-        Some(Command::Dupes { min_size, delete }) => run_dupes(&cli, *min_size, *delete),
+        Some(Command::Dupes {
+            min_size,
+            delete,
+            no_cache,
+            clear_cache,
+        }) => run_dupes(&cli, *min_size, *delete, *no_cache, *clear_cache),
         Some(Command::Delete) => run_delete(&cli),
         Some(Command::Tui) => run_tui(&cli),
     }
@@ -218,7 +263,8 @@ fn setup_pager(_cli: &Cli) {}
 fn run_scan(cli: &Cli) -> ExitCode {
     let scan = scan_with_progress(cli, !cli.json);
     let total: u64 = scan.files.iter().map(|f| f.size).sum();
-    let summaries = analyzer::analyze(&scan.files, cli.stale_years);
+    let mut summaries = analyzer::analyze(&scan.files, cli.stale_years);
+    analyzer::sort_summaries(&mut summaries, cli.sort.into(), cli.reverse);
 
     if cli.json {
         let envelope = serde_json::json!({
@@ -245,9 +291,30 @@ fn run_scan(cli: &Cli) -> ExitCode {
     ExitCode::from(EXIT_SUCCESS)
 }
 
-fn run_dupes(cli: &Cli, min_size: u64, delete: bool) -> ExitCode {
+fn run_dupes(
+    cli: &Cli,
+    min_size: u64,
+    delete: bool,
+    no_cache: bool,
+    clear_cache: bool,
+) -> ExitCode {
+    if clear_cache {
+        if let Err(e) = bigfiles::cache::clear() {
+            eprintln!("bigfiles: failed to clear hash cache: {}", e);
+        }
+    }
     let scan = scan_with_progress(cli, true);
-    let groups = dupes::find(&scan.files, min_size);
+    let cache = if no_cache {
+        bigfiles::cache::HashCache::empty()
+    } else {
+        bigfiles::cache::HashCache::load()
+    };
+    let groups = dupes::find_with_cache(&scan.files, min_size, &cache);
+    if !no_cache {
+        if let Err(e) = cache.save() {
+            eprintln!("bigfiles: failed to save hash cache: {}", e);
+        }
+    }
     if delete {
         match dupes::delete_interactive(&groups, &cli.path) {
             Ok(()) => ExitCode::from(EXIT_SUCCESS),

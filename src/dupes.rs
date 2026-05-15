@@ -1,3 +1,4 @@
+use crate::cache::HashCache;
 use crate::format::bytes as format_bytes;
 use crate::walker::{FileEntry, InodeKey};
 use dialoguer::{theme::ColorfulTheme, Confirm, Select};
@@ -32,10 +33,17 @@ impl DupeGroup {
 }
 
 pub fn find(files: &[FileEntry], min_size: u64) -> Vec<DupeGroup> {
+    let cache = HashCache::empty();
+    find_with_cache(files, min_size, &cache)
+}
+
+pub fn find_with_cache(files: &[FileEntry], min_size: u64, cache: &HashCache) -> Vec<DupeGroup> {
     let by_size = group_by_size(files, min_size);
     let mut groups: Vec<DupeGroup> = by_size
         .into_par_iter()
-        .flat_map_iter(|(size, candidates)| process_size_bucket(size, candidates).into_iter())
+        .flat_map_iter(|(size, candidates)| {
+            process_size_bucket(size, candidates, cache).into_iter()
+        })
         .collect();
 
     groups.sort_by_key(|g| std::cmp::Reverse(g.reclaimable()));
@@ -54,7 +62,11 @@ fn group_by_size(files: &[FileEntry], min_size: u64) -> HashMap<u64, Vec<&FileEn
     by_size
 }
 
-fn process_size_bucket(size: u64, candidates: Vec<&FileEntry>) -> Vec<DupeGroup> {
+fn process_size_bucket(
+    size: u64,
+    candidates: Vec<&FileEntry>,
+    cache: &HashCache,
+) -> Vec<DupeGroup> {
     let by_inode = collapse_hardlinks(&candidates);
     if by_inode.len() < 2 {
         return Vec::new();
@@ -62,7 +74,7 @@ fn process_size_bucket(size: u64, candidates: Vec<&FileEntry>) -> Vec<DupeGroup>
     let by_partial = group_by_partial_hash(&by_inode);
     let mut out = Vec::new();
     for partial_group in by_partial {
-        for full_group in group_by_full_hash(&partial_group) {
+        for full_group in group_by_full_hash(&partial_group, cache) {
             let mut entries: Vec<DupeEntry> = full_group;
             entries.sort_by(|a, b| a.primary_path().cmp(b.primary_path()));
             out.push(DupeGroup { size, entries });
@@ -108,10 +120,10 @@ fn group_by_partial_hash(entries: &[DupeEntry]) -> Vec<Vec<DupeEntry>> {
     by_hash.into_values().filter(|v| v.len() >= 2).collect()
 }
 
-fn group_by_full_hash(entries: &[DupeEntry]) -> Vec<Vec<DupeEntry>> {
+fn group_by_full_hash(entries: &[DupeEntry], cache: &HashCache) -> Vec<Vec<DupeEntry>> {
     let hashed: Vec<([u8; 32], &DupeEntry)> = entries
         .par_iter()
-        .filter_map(|e| full_hash(e.primary_path()).map(|h| (h, e)))
+        .filter_map(|e| cached_full_hash(e.primary_path(), cache).map(|h| (h, e)))
         .collect();
 
     let mut by_hash: HashMap<[u8; 32], Vec<DupeEntry>> = HashMap::new();
@@ -121,6 +133,18 @@ fn group_by_full_hash(entries: &[DupeEntry]) -> Vec<Vec<DupeEntry>> {
         });
     }
     by_hash.into_values().filter(|v| v.len() >= 2).collect()
+}
+
+fn cached_full_hash(path: &Path, cache: &HashCache) -> Option<[u8; 32]> {
+    let meta = fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok()?;
+    let size = meta.len();
+    if let Some(h) = cache.get(path, mtime, size) {
+        return Some(h);
+    }
+    let h = full_hash(path)?;
+    cache.insert(path, mtime, size, h);
+    Some(h)
 }
 
 fn partial_hash(path: &Path) -> Option<[u8; 32]> {

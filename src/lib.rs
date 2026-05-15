@@ -1,4 +1,5 @@
 pub mod analyzer;
+pub mod cache;
 pub mod classifier;
 pub mod dupes;
 pub mod format;
