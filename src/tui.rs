@@ -139,12 +139,22 @@ fn propagate_size(
     }
 }
 
+#[derive(Default)]
+enum InputMode {
+    #[default]
+    Normal,
+    Filter,
+}
+
 struct AppState {
     tree: Tree,
     current: usize,
     list_state: ListState,
     show_help: bool,
     quit: bool,
+    filter: String,
+    input_mode: InputMode,
+    status: Option<String>,
 }
 
 impl AppState {
@@ -158,15 +168,30 @@ impl AppState {
             list_state,
             show_help: false,
             quit: false,
+            filter: String::new(),
+            input_mode: InputMode::Normal,
+            status: None,
         }
     }
 
-    fn children(&self) -> &[usize] {
+    fn all_children(&self) -> &[usize] {
         &self.tree.nodes[self.current].children
     }
 
+    fn visible_children(&self) -> Vec<usize> {
+        let kids = self.all_children();
+        if self.filter.is_empty() {
+            return kids.to_vec();
+        }
+        let needle = self.filter.to_lowercase();
+        kids.iter()
+            .copied()
+            .filter(|&i| self.tree.nodes[i].name.to_lowercase().contains(&needle))
+            .collect()
+    }
+
     fn move_down(&mut self) {
-        let n = self.children().len();
+        let n = self.visible_children().len();
         if n == 0 {
             return;
         }
@@ -179,7 +204,7 @@ impl AppState {
     }
 
     fn move_up(&mut self) {
-        if self.children().is_empty() {
+        if self.visible_children().is_empty() {
             return;
         }
         let next = self
@@ -190,16 +215,20 @@ impl AppState {
         self.list_state.select(Some(next));
     }
 
+    fn selected_node_idx(&self) -> Option<usize> {
+        let vis = self.visible_children();
+        let i = self.list_state.selected()?;
+        vis.get(i).copied()
+    }
+
     fn descend(&mut self) {
-        let Some(i) = self.list_state.selected() else {
-            return;
-        };
-        let Some(&child_idx) = self.children().get(i) else {
+        let Some(child_idx) = self.selected_node_idx() else {
             return;
         };
         if self.tree.nodes[child_idx].is_dir && !self.tree.nodes[child_idx].children.is_empty() {
             self.current = child_idx;
             self.list_state.select(Some(0));
+            self.filter.clear();
         }
     }
 
@@ -212,6 +241,7 @@ impl AppState {
             if let Some(&p_idx) = self.tree.by_path.get(parent) {
                 let target = self.current;
                 self.current = p_idx;
+                self.filter.clear();
                 let sel = self.tree.nodes[p_idx]
                     .children
                     .iter()
@@ -221,6 +251,57 @@ impl AppState {
             }
         }
     }
+
+    fn reveal_selected(&mut self) {
+        let Some(idx) = self.selected_node_idx() else {
+            self.status = Some("nothing selected".to_string());
+            return;
+        };
+        let path = self.tree.nodes[idx].path.clone();
+        match open_in_file_manager(&path) {
+            Ok(()) => self.status = Some(format!("revealed: {}", path.display())),
+            Err(e) => self.status = Some(format!("reveal failed: {}", e)),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_in_file_manager(path: &Path) -> io::Result<()> {
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+fn open_in_file_manager(path: &Path) -> io::Result<()> {
+    let target = if path.is_file() {
+        path.parent().unwrap_or(path).to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+    std::process::Command::new("xdg-open")
+        .arg(&target)
+        .status()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+fn open_in_file_manager(path: &Path) -> io::Result<()> {
+    std::process::Command::new("explorer")
+        .arg("/select,")
+        .arg(path)
+        .status()
+        .map(|_| ())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn open_in_file_manager(_path: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "reveal not supported on this platform",
+    ))
 }
 
 pub fn run(root: &Path, files: &[FileEntry]) -> io::Result<()> {
@@ -261,6 +342,30 @@ fn handle_key(state: &mut AppState, code: KeyCode, mods: KeyModifiers) {
         state.show_help = false;
         return;
     }
+    if matches!(state.input_mode, InputMode::Filter) {
+        match code {
+            KeyCode::Esc => {
+                state.input_mode = InputMode::Normal;
+                state.filter.clear();
+                state.list_state.select(Some(0));
+            }
+            KeyCode::Enter => {
+                state.input_mode = InputMode::Normal;
+            }
+            KeyCode::Backspace => {
+                state.filter.pop();
+                state.list_state.select(Some(0));
+            }
+            KeyCode::Char(c) if !mods.contains(KeyModifiers::CONTROL) => {
+                state.filter.push(c);
+                state.list_state.select(Some(0));
+            }
+            KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => state.quit = true,
+            _ => {}
+        }
+        return;
+    }
+    state.status = None;
     match code {
         KeyCode::Char('q') | KeyCode::Esc => state.quit = true,
         KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => state.quit = true,
@@ -269,6 +374,12 @@ fn handle_key(state: &mut AppState, code: KeyCode, mods: KeyModifiers) {
         KeyCode::Up | KeyCode::Char('k') => state.move_up(),
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => state.descend(),
         KeyCode::Left | KeyCode::Backspace => state.ascend(),
+        KeyCode::Char('/') => {
+            state.input_mode = InputMode::Filter;
+            state.filter.clear();
+            state.list_state.select(Some(0));
+        }
+        KeyCode::Char('o') => state.reveal_selected(),
         _ => {}
     }
 }
@@ -302,7 +413,7 @@ fn draw(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
     .block(Block::default().borders(Borders::BOTTOM));
     f.render_widget(header, layout[0]);
 
-    let kids = state.children();
+    let kids = state.visible_children();
     let max_size = kids
         .iter()
         .map(|&i| state.tree.nodes[i].size)
@@ -357,14 +468,39 @@ fn draw(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
         .highlight_symbol(" ▶ ");
     f.render_stateful_widget(list, layout[1], &mut state.list_state);
 
-    let footer_text = if state.show_help {
-        "↑/↓ or j/k: move   ↵/→: open   ←/⌫: up   q: quit   ?: toggle help".to_string()
+    let footer = if matches!(state.input_mode, InputMode::Filter) {
+        Paragraph::new(Line::from(vec![
+            Span::styled("  filter: ", Style::default().fg(Color::Yellow)),
+            Span::styled(state.filter.clone(), Style::default().fg(Color::White)),
+            Span::styled("_", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                "   (Esc: cancel, Enter: keep)",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]))
+    } else if let Some(msg) = &state.status {
+        Paragraph::new(Span::styled(
+            format!("  {}", msg),
+            Style::default().fg(Color::Green),
+        ))
+    } else if state.show_help {
+        Paragraph::new(Span::styled(
+            "  ↑/↓ or j/k: move   ↵/→: open   ←/⌫: up   /: filter   o: reveal in file manager   q: quit   ?: toggle help".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ))
     } else {
-        "↑/↓ move   ↵ open   ← up   q quit   ? help".to_string()
+        let suffix = if !state.filter.is_empty() {
+            format!("   filter: '{}'", state.filter)
+        } else {
+            String::new()
+        };
+        Paragraph::new(Span::styled(
+            format!(
+                "  ↑/↓ move   ↵ open   ← up   / filter   o reveal   q quit   ? help{}",
+                suffix
+            ),
+            Style::default().fg(Color::DarkGray),
+        ))
     };
-    let footer = Paragraph::new(Span::styled(
-        format!("  {}", footer_text),
-        Style::default().fg(Color::DarkGray),
-    ));
     f.render_widget(footer, layout[2]);
 }

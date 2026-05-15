@@ -103,9 +103,7 @@ fn bench_walkers(c: &mut Criterion) {
     group.bench_function("deep_narrow_ignore_off", |b| {
         b.iter(|| count_ignore(deep.path(), false))
     });
-    group.bench_function("deep_narrow_jwalk", |b| {
-        b.iter(|| count_jwalk(deep.path()))
-    });
+    group.bench_function("deep_narrow_jwalk", |b| b.iter(|| count_jwalk(deep.path())));
 
     group.bench_function("realistic_ignore_on", |b| {
         b.iter(|| count_ignore(real.path(), true))
@@ -113,9 +111,7 @@ fn bench_walkers(c: &mut Criterion) {
     group.bench_function("realistic_ignore_off", |b| {
         b.iter(|| count_ignore(real.path(), false))
     });
-    group.bench_function("realistic_jwalk", |b| {
-        b.iter(|| count_jwalk(real.path()))
-    });
+    group.bench_function("realistic_jwalk", |b| b.iter(|| count_jwalk(real.path())));
 
     group.finish();
 }

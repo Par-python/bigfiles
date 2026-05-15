@@ -3,20 +3,23 @@
 [![CI](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/bigfiles.svg)](https://crates.io/crates/bigfiles)
 [![Downloads](https://img.shields.io/crates/d/bigfiles.svg)](https://crates.io/crates/bigfiles)
+[![Stars](https://img.shields.io/github/stars/Par-python/bigfiles.svg?style=flat)](https://github.com/Par-python/bigfiles/stargazers)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
 A small Rust CLI that walks a directory in parallel, groups files by type, flags stale ones, finds duplicates (hardlink-aware), and renders a color-coded summary in the terminal. Cross-platform: Linux, macOS, Windows.
 
 ## What it does
 
-- **Interactive TUI** (`bigfiles tui`) — ncdu-style directory browser with arrow-key navigation
+- **Interactive TUI** (`bigfiles tui`) — ncdu-style directory browser with arrow-key navigation, `/` filter, and `o` to reveal in OS file manager
+- **Quick audit** (`bigfiles audit`) — severity-coded "what's eating your disk" insights in one screen
 - Walks a directory tree **in parallel** and collects file sizes, extensions, and modified timestamps
 - Respects `.gitignore` and `.ignore` files by default (use `--no-ignore` to disable)
 - Skips symlinks (no double-counting, no follow-link footguns)
 - Groups files into categories: video, images, archives, audio, documents, code, junk, other
 - Flags files not modified in the last N years as stale
 - Renders a color-coded table with size bars, optionally with the largest files per category
-- Finds duplicate files by content hash with **parallel BLAKE3 hashing** and **hardlink awareness** (collapses same-inode files so reclaimable space is honest)
+- **Sortable** category table (`--sort size|count|stale-size|stale-count|name`, `--reverse`)
+- Finds duplicate files by content hash with **parallel BLAKE3 hashing**, **hardlink awareness**, and a **persistent on-disk cache** so re-scans are near-instant
 - Interactively deletes stale files **or** duplicate copies with explicit confirmation
 - Emits JSON for piping into other tools
 - Colorized `--help` output via clap styles
@@ -73,6 +76,13 @@ bigfiles ~/Documents --stale-years 5
 
 # Pipe JSON into jq (envelope: { version, root, total_size, skipped, categories })
 bigfiles ~/Movies --json | jq '.categories[] | select(.stale_size > 1000000000)'
+
+# Sort the breakdown by file count instead of size; reverse for smallest-first
+bigfiles ~ --sort count
+bigfiles ~ --sort size --reverse
+
+# Quick "what's eating my disk" insights view
+bigfiles audit ~
 ```
 
 ### .gitignore awareness
@@ -89,7 +99,17 @@ Use `--no-ignore` to walk everything regardless.
 bigfiles tui ~
 ```
 
-Keys: `↑/↓` (or `j/k`) move • `Enter`/`→` descend into directory • `←`/`Backspace` go up • `q`/`Esc` quit • `?` toggle help.
+Keys: `↑/↓` (or `j/k`) move • `Enter`/`→` descend into directory • `←`/`Backspace` go up • `/` filter children by substring (`Esc` cancels, `Enter` keeps) • `o` reveal selected entry in your OS file manager (`open -R` on macOS, `explorer /select,` on Windows, `xdg-open` on Linux) • `q`/`Esc` quit • `?` toggle help.
+
+### Quick audit
+
+`bigfiles audit <path>` runs a normal scan, then prints a short list of severity-coded insights about what's eating your disk — heaviest category, top extensions, installer-junk total (`.dmg`/`.pkg`/`.iso`/`.exe`/`.msi`/`.deb`/`.rpm`), top-N-file concentration, and the share of stale data. Useful as a first-run "where do I start?" view.
+
+```bash
+bigfiles audit ~
+```
+
+Insights are bulleted by severity: red `!` for heavy (≥40% of total), yellow `•` for notable (≥20%), dimmed `·` for informational. Respects `--stale-years` and all global filters (`--skip-hidden`, `--exclude`, `--depth`, etc.).
 
 ### Find duplicate files
 
@@ -128,6 +148,18 @@ Safety guarantees:
 
 Note that dupes are only ever paired *within* the scan root. If two copies live in separate trees, scan a common parent.
 
+#### Persistent hash cache
+
+`bigfiles dupes` caches full-file BLAKE3 hashes to your OS cache directory so subsequent runs over the same tree are near-instant.
+
+- **Location**: `~/Library/Caches/bigfiles/hashes.json` (macOS), `$XDG_CACHE_HOME/bigfiles/hashes.json` (Linux), `%LOCALAPPDATA%\bigfiles\Cache\hashes.json` (Windows)
+- **Cache key**: `(path, mtime, size)` — any change invalidates the entry, forcing a re-hash. Tagged with the hash algorithm so the cache survives version bumps.
+- **Pruning**: entries for paths that no longer exist are dropped on the next save.
+- `--no-cache` runs without touching the cache (no read, no write).
+- `--clear-cache` deletes the cache file before running.
+
+In local testing, the warm cache is roughly 40× faster than a cold first run on the same tree.
+
 ### Delete stale files (interactive)
 
 `bigfiles delete` shows you every file older than `--stale-years` (default 2) in an interactive checklist. You tick which ones to remove, see a confirmation summary, and only then are files deleted. **Files are removed permanently — they do not go to Trash.**
@@ -153,6 +185,17 @@ The flow: list → tick boxes (Space) → Enter → review summary → type `y` 
 | `--color <WHEN>` | `auto` | Color output: `auto`, `always`, `never`. Also respects `NO_COLOR`. |
 | `-t, --top <N>` | off | Show N largest files per category (default scan only) |
 | `-j, --json` | off | Emit raw JSON (default scan only) |
+| `--sort <KEY>` | `size` | Sort categories by `size`, `count`, `stale-size`, `stale-count`, or `name` (default scan only) |
+| `--reverse` | off | Reverse the sort order (default scan only) |
+
+### Flags (dupes subcommand)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--min-size <BYTES>` | `1024` | Minimum file size to consider |
+| `--delete` | off | Interactively delete duplicate copies (keep one per group) |
+| `--no-cache` | off | Skip the persistent hash cache for this run |
+| `--clear-cache` | off | Delete the persistent hash cache before running |
 
 ### Pager
 
