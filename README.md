@@ -3,6 +3,7 @@
 [![CI](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/Par-python/bigfiles/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/bigfiles.svg)](https://crates.io/crates/bigfiles)
 [![Downloads](https://img.shields.io/crates/d/bigfiles.svg)](https://crates.io/crates/bigfiles)
+[![Stars](https://img.shields.io/github/stars/Par-python/bigfiles.svg?style=flat)](https://github.com/Par-python/bigfiles/stargazers)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
 A small Rust CLI that walks a directory in parallel, groups files by type, flags stale ones, finds duplicates (hardlink-aware), and renders a color-coded summary in the terminal. Cross-platform: Linux, macOS, Windows.

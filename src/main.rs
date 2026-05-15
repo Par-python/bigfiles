@@ -139,6 +139,8 @@ enum Command {
     Delete,
     /// Interactive directory browser (ncdu-style)
     Tui,
+    /// Quick insights about what's eating your disk
+    Audit,
 }
 
 fn main() -> ExitCode {
@@ -191,6 +193,7 @@ fn main() -> ExitCode {
         }) => run_dupes(&cli, *min_size, *delete, *no_cache, *clear_cache),
         Some(Command::Delete) => run_delete(&cli),
         Some(Command::Tui) => run_tui(&cli),
+        Some(Command::Audit) => run_audit(&cli),
     }
 }
 
@@ -339,6 +342,16 @@ fn run_tui(cli: &Cli) -> ExitCode {
             ExitCode::from(EXIT_RUNTIME_ERROR)
         }
     }
+}
+
+fn run_audit(cli: &Cli) -> ExitCode {
+    let scan = scan_with_progress(cli, true);
+    let total: u64 = scan.files.iter().map(|f| f.size).sum();
+    let summaries = analyzer::analyze(&scan.files, cli.stale_years);
+    let insights = bigfiles::audit::analyze(&scan.files, &summaries, total, cli.stale_years);
+    setup_pager(cli);
+    bigfiles::audit::render(&insights, total, &cli.path);
+    ExitCode::from(EXIT_SUCCESS)
 }
 
 fn run_delete(cli: &Cli) -> ExitCode {
