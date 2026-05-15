@@ -205,6 +205,34 @@ src/
   - **Pager is disabled** on Windows (there's no portable `less`). Output prints straight to stdout — pipe to `more` or use Windows Terminal's scrollback. The `--no-pager` flag is a no-op there.
   - **Hardlink detection is currently inactive** — the inode/file-index API is nightly-only on `std`. Dupe detection still works, but hardlinks are treated as separate entries instead of being collapsed.
 
+## Performance notes
+
+bigfiles uses a parallel directory walker (the [`ignore`](https://crates.io/crates/ignore) crate, same engine as ripgrep) which is fast and portable across macOS, Linux, and Windows. It is not the theoretical fastest approach on every platform:
+
+- **Windows / NTFS**: Reading the Master File Table (MFT) directly enumerates every file on a volume in one sequential pass. Tools like `everything.exe` use this. bigfiles does not, yet. See [#1](https://github.com/Par-python/bigfiles/issues/1).
+- **macOS / APFS**: The volume catalog can be read in bulk via `getattrlistbulk`, which is faster than `readdir` on large trees. bigfiles does not exploit this. See [#2](https://github.com/Par-python/bigfiles/issues/2).
+- **Linux (ext4 / btrfs / xfs)**: No comparable shortcut. Standard parallel walking is close to optimal.
+
+If you have benchmarks against `fd`, `dust`, `fclones`, or other scanners, open an issue. Honest numbers are welcome.
+
+### Benchmarks: `ignore` vs `jwalk`
+
+A common suggestion is to swap the `ignore`-based walker for [`jwalk`](https://crates.io/crates/jwalk) for higher throughput. The numbers don't support it for bigfiles' workload. Run with `cargo bench --bench walker_bench`.
+
+| Tree shape | `ignore` (gitignore on) | `ignore` (gitignore off) | `jwalk` |
+|---|---|---|---|
+| Shallow-wide (10k files in one dir) | 11.0 ms | 7.2 ms | 7.4 ms |
+| Deep-narrow (50 levels × 1 file) | 1.73 ms | 1.02 ms | 1.43 ms |
+| Realistic (src + ignored `node_modules`) | **0.34 ms** | 9.7 ms | 4.6 ms |
+
+Takeaways:
+
+- With gitignore parsing disabled, `ignore` and `jwalk` are effectively tied. `ignore` actually wins the deep-narrow case.
+- The realistic workload is where `ignore` pulls ahead by ~28×: a `.gitignore` excluding `node_modules` lets the walker skip ~5,000 files without ever calling `stat`. `jwalk` doesn't have gitignore support out of the box, so it walks everything.
+- For bigfiles' actual users (dev machines with `node_modules`, `target/`, `.venv/`), the gitignore-aware skip wins by a margin no raw-throughput improvement could close.
+
+Measured on macOS (Apple Silicon) with Criterion, 100 samples each. Numbers are wall-clock per iteration.
+
 ## Caveats
 
 - **Deletion is permanent** for both `delete` and `dupes --delete` — nothing goes to Trash. The interactive flow exists precisely to keep that decision explicit; there is no `--force` or non-interactive delete mode by design.

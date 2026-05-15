@@ -34,9 +34,14 @@ pager      = "0.16"
 tempfile   = "3"
 insta      = "1"
 criterion  = { version = "0.5", features = ["html_reports"] }
+jwalk      = "0.8"
 
 [[bench]]
 name = "dupes_bench"
+harness = false
+
+[[bench]]
+name = "walker_bench"
 harness = false
 
 [profile.release]
