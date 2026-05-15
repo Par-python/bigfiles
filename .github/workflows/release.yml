@@ -59,21 +59,3 @@ jobs:
           target: ${{ matrix.target }}
           archive: bigfiles-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
-
-  homebrew:
-    name: Update Homebrew tap
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: mislav/bump-homebrew-formula-action@v3
-        with:
-          formula-name: bigfiles
-          homebrew-tap: Par-python/homebrew-bigfiles
-          base-branch: main
-          download-url: https://github.com/Par-python/bigfiles/releases/download/${{ github.ref_name }}/bigfiles-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz
-          commit-message: |
-            bigfiles {{version}}
-
-            Created by https://github.com/mislav/bump-homebrew-formula-action
-        env:
-          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
